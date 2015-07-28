@@ -63,7 +63,7 @@ class AbstractTangoDict(dict):
         else:
             self._dict_class = dict
         self._cache = self._dict_class()
-        self.refresh()
+        # self.refresh()
         self._id = next(idgen)
 
     def refresh(self, recurse=False):
