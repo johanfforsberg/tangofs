@@ -5,10 +5,17 @@ import stat
 from time import time
 from dateutil import parser
 import tempfile
+import logging
 
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
-from tangodict import TangoDict, DeviceProperty, DeviceDict
+from tangodict import (TangoDict, DeviceProperty, DeviceDict, ClassDict,
+                       PropertiesDict, InstanceDict,
+                       DeviceAttribute, DeviceCommand)
 import PyTango
+
+# load the command script template
+with open("/".join(__path__) + "/command.py") as f:
+    EXE = f.read()
 
 
 def unix_time(dt):
@@ -20,45 +27,19 @@ def unix_time(dt):
 class TangoFS(LoggingMixIn, Operations):
 
     def __init__(self):
-        self.tree = TangoDict(ttl=10)
+        self.tree = TangoDict()
+        self.tmp = {}
 
     def _get_path(self, path):
         # decode device slashes
         p = [str(part.replace("%", "/")) for part in path[1:].split("/")]
-        try:
-            target = self.tree.get_path(p)
-            return target
-        except KeyError:
-            raise FuseOSError(ENOENT)
+        target = self.tree.get_path(p)
+        return target
 
-    def getattr(self, path, fh=None):
-
-        target = self._get_path(path)
-
-        # show properties as files
-        if type(target) == DeviceProperty:
-            mode = stat.S_IFREG
-            # these timestamp formats are completely made up, but
-            # hopefully the dateutils parser will hold together...
-            last_mod = parser.parse(target.history[-1].get_date())
-            now = unix_time(last_mod)
-            size = len("\n".join(target.value))
-        # otherwise show it as a directory
-        else:
-            mode = stat.S_IFDIR
-            now = time()
-            size = 0
-
-        # If the device is exported, mark the node as executable
-        if type(target) == DeviceDict:
-            if target.info.exported:
-                mode |= 0111
-                started = parser.parse(target.info.started_date)
-                now = unix_time(started)
-
-        mode |= 0755
-
+    @staticmethod
+    def make_node(mode, size=0, timestamp=None):
         # TODO: find something meaningful to do with all this
+        timestamp = timestamp or time()
         return {
             'st_mode': mode,
             'st_ino': 0,
@@ -67,46 +48,167 @@ class TangoFS(LoggingMixIn, Operations):
             'st_uid': os.getuid(),  # file object's user id
             'st_gid': os.getgid(),  # file object's group id
             'st_size': size,
-            'st_atime': now,  # last access time in seconds
-            'st_mtime': now,  # last modified time in seconds
-            'st_ctime': now,
+            'st_atime': timestamp,  # last access time in seconds
+            'st_mtime': timestamp,  # last modified time in seconds
+            'st_ctime': timestamp,
             # st_blocks is the amount of blocks of the file object, and
             # depends on the block size of the file system (here: 512
             # Bytes)
             'st_blocks': int((size + 511) / 512)
         }
 
+    # # #  FUSE API  # # #
+
+    def getattr(self, path, fh=None):
+        "getattr gets run all the time"
+
+        try:
+            # Firs check if the path is directly accessible
+            target = self._get_path(path)
+        except (KeyError, TypeError):
+            try:
+                # Attribute access needs special treatment
+                parent, child = path.rsplit("/", 1)
+                target = self._get_path(parent)
+                if isinstance(target, DeviceAttribute):
+                    # Note: This is inefficient since we'll read the attribute twice.
+                    # Once here to get the size, and once in read()
+                    size = len(str(getattr(target, child))) + 1  # to add newline
+                else:
+                    size = 0
+                mode = stat.S_IFREG
+                return self.make_node(mode=mode, size=size)
+            except KeyError:
+                # OK, what we're looking for is not in the DB. Let's
+                # check if there is any pending creation operations going
+                # on
+                try:
+                    placeholder = self.tmp.pop(path)
+                    if placeholder == "PROPERTY":
+                        # This means the user is creating something
+                        return self.make_node(mode=stat.S_IFREG)
+                    # ... other types of pending operations ...
+                    else:
+                        print "This can't happen..?!"
+                except KeyError:
+                    raise FuseOSError(ENOENT)
+
+        # properties correspond to files
+        if type(target) == DeviceProperty:
+            # use last history date as timestamp
+            timestamp = parser.parse(target.history[-1].get_date())
+            return self.make_node(
+                mode=stat.S_IFREG, timestamp=unix_time(timestamp),
+                size=len("\n".join(target.value)))
+        elif isinstance(target, DeviceCommand):
+            # TODO: use the real size
+            return self.make_node(mode=stat.S_IFREG | 755, size=1000)
+        # If the device is exported, mark the node as executable
+        elif isinstance(target, DeviceDict):
+            # these timestamp formats are completely made up, but
+            # hopefully the dateutils parser will hold together...
+            timestamp = parser.parse(target.info.started_date)
+            mode = stat.S_IFDIR
+            if target.info and target.info.exported:
+                # If the device is exported, mark the node as executable
+                mode |= 777
+            return self.make_node(mode=mode, timestamp=unix_time(timestamp))
+        # otherwise show it as a directory
+        else:
+            return self.make_node(mode=stat.S_IFDIR, size=0)
+
     def readdir(self, path, fh):
+        print "readdir", path
         try:
             target = self._get_path(path)
         except PyTango.DevFailed:
             return None
         # Since slashes are not allowed in file names, we encode
-        # them as percent signs (%)
-        nodes = [".", ".."] + [name.replace("/", "%")
-                               for name in target.keys()]
+        # them as percent signs (%) to sanitize device names
+        nodes = [name.replace("/", "%") for name in target.keys()]
         if isinstance(target, DeviceDict):
             nodes.append(".info")
-        return nodes
+        if isinstance(target, PropertiesDict):
+            nodes.extend([node + ".history" for node in nodes])
+        return [".", ".."] + nodes
+
+    def mkdir(self, path, mode):
+        print "mkdir", path, mode
+        parent, name = path.rsplit("/", 1)
+        target = self._get_path(parent)
+        if isinstance(target, ClassDict):  # creating a device
+            target.add([name.replace("%", "/")])
 
     def read(self, path, size, offset, fh):
-        subpath, nodename = path.rsplit("/", 1)
-        target = self._get_path(path)
-        return "\n".join(target.value)
+        print "read", path, size, offset
+        try:
+            target = self._get_path(path)
+        except KeyError:
+            print "no such path", path
+            raise FuseOSError(ENOENT)
+        except TypeError:  # ugh
+            parent, child = path.rsplit("/", 1)
+            target = self._get_path(parent)
+            if isinstance(target, DeviceAttribute):
+                return str(getattr(target, child)) + "\n"
+        if isinstance(target, DeviceCommand):
+            return EXE.format(device=target.devicename, command=target.name)
+        if isinstance(target, DeviceProperty):
+            return "\n".join(target.value)
 
-    def write(self, path, buf, offset, fh):
-        print path, buf, offset, fh
-        return 100
+    def write(self, path, data, offset, fh):
+        "Write data to a file"
+        print "write", path
+        # TODO: currently we just overwrite, figure out append
+        try:
+            target = self._get_path(path)
+        except KeyError:
+            parent, prop = path.rsplit("/", 1)
+            target = self._get_path(parent)
+            if isinstance(target, PropertiesDict):
+                # creating a new property
+                target.add({str(prop): data.split()})
+        if isinstance(target, DeviceProperty):
+            target.set_value(data.split())
+        return len(data)  # ?
 
     def create(self, path, mode, fi=None):
+        print "create", path, mode, fi
+        # In order to create properties we need to temporarily
+        # remember them. Otherwise getattr will fail. We could
+        # first create an empty property I guess, but that would
+        # be inefficient. This feels a bit hacky, though...
+        self.tmp[path] = "PROPERTY"
         return 0
 
-    def open(self, path, flags):
-        print path, flags
-        subpath, nodename = path.rsplit("/", 1)
+    def unlink(self, path):
+        # remove a file
+        print "unlink", path
         target = self._get_path(path)
-        tf = tempfile.NamedTemporaryFile()
-        tf.writelines(target.value)
+        if isinstance(target, DeviceProperty):
+            target.delete()
+
+    def rmdir(self, path):
+        """Removing a directory should delete the corresponding
+        thing in the DB, e.g. a device"""
+        # TODO: how do we handle non-empty things? Should it
+        # even be possible to remove a server with more than
+        # one instance inside? How do we handle things that are
+        # running; write protect them?
+        target = self._get_path(path)
+        if isinstance(target, (InstanceDict, DeviceDict)):
+            target.delete()
+
+    def truncate(self, path, length, fh=None):
+        # I don't think this will be very useful..?
+        pass
+
+    def open(self, path, flags):
+        print "open", path, flags
+        # TODO: figure out how appending works.
+        # It must be a set of flags. Then we need to
+        # somehow save the fact that we're appending
+        # and not overwriting...
         return 0
 
 

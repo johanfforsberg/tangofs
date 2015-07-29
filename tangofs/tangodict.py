@@ -9,8 +9,8 @@ import re
 from abc import ABCMeta, abstractmethod
 from functools import partial
 from itertools import chain
-import logging
-from weakref import ref, ReferenceError
+from time import time
+#from weakref import ref, ReferenceError
 
 import PyTango
 
@@ -67,6 +67,7 @@ class AbstractTangoDict(dict):
         self._id = next(idgen)
 
     def refresh(self, recurse=False):
+        print "refresh"
         items = self.get_items_from_db()
         self._cache = self._dict_class(**dict((str(name), None)
                                               for name in items))
@@ -89,12 +90,12 @@ class AbstractTangoDict(dict):
     @property
     def parent(self):
         try:
-            if self._parent():
-                return self._parent()
+            if self._parent:
+                return self._parent
         except (TypeError, ReferenceError):
             pass
-        parent = self.make_parent()
-        self._parent = ref(parent)  # a weak reference to loosen circularity..?
+        parent = self.make_parent
+        self._parent = parent  # a weak reference to loosen circularity..?
         return parent
 
     @property
@@ -107,11 +108,16 @@ class AbstractTangoDict(dict):
             self.child_type, id(self))
 
     def __getitem__(self, name):
+        if not self._cache:
+            self.refresh()
         try:
             item = self._cache.get(name)
             if not item:
+                if name not in self._cache:
+                    raise KeyError("No such child to %s" % self.name)
                 item = self.make_child(name)
                 self._cache[name] = item
+                print "put", name, item, "in cache"
             return item
         except (ValueError, PyTango.DevFailed) as e:
             raise KeyError(e)
@@ -163,6 +169,9 @@ class AbstractTangoDict(dict):
                     result[key] = child
         return result
 
+    def __del__(self):
+        print "GC", self.name, self.parent._cache.get(self.name)
+
 
 class DomainsDict(AbstractTangoDict):
 
@@ -181,16 +190,16 @@ class FamiliesDict(AbstractTangoDict):
     child_type = "family"
 
     def __init__(self, db, domain, **kwargs):
-        self.domain = domain
+        self.name = domain
         super(FamiliesDict, self).__init__(db, **kwargs)
 
     def get_items_from_db(self):
-        result = self._db.get_device_family(self.domain + "/*")
+        result = self._db.get_device_family(self.name + "/*")
         families = result.value_string
         return families
 
     def make_child(self, family):
-        return MembersDict(self._db, self.domain, family, parent=self)
+        return MembersDict(self._db, self.name, family, parent=self)
 
 
 class MembersDict(AbstractTangoDict):
@@ -199,16 +208,16 @@ class MembersDict(AbstractTangoDict):
 
     def __init__(self, db, domain, family, **kwargs):
         self.domain = domain
-        self.family = family
+        self.name = family
         super(MembersDict, self).__init__(db, **kwargs)
 
     def get_items_from_db(self):
-        result = self._db.get_device_member(self.domain + "/" + self.family + "/*")
+        result = self._db.get_device_member(self.domain + "/" + self.name + "/*")
         members = result.value_string
         return members
 
     def make_child(self, member):
-        devname = "{0}/{1}/{2}".format(self.domain, self.family, member)
+        devname = "{0}/{1}/{2}".format(self.domain, self.name, member)
         return DeviceDict(self._db, devname, parent=self)
 
 
@@ -251,6 +260,9 @@ class ServersDict(AbstractTangoDict):
         # finally we must refresh the tree to see the new stuff
         self[srvname][instname][classname].refresh()
 
+    def delete(self, srvname, instname):
+        self[srvname].delete(instname)
+
 
 class ServerDict(AbstractTangoDict):
 
@@ -278,6 +290,9 @@ class ServerDict(AbstractTangoDict):
         self.parent.add(self.name, instname, classname, devices)
 
     def __delitem__(self, instancename):
+        self.delete(instancename)
+
+    def delete(self, instancename):
         self._db.delete_server("%s/%s" % (self.servername, self.name))
         self.refresh()
 
@@ -299,7 +314,7 @@ class InstanceDict(AbstractTangoDict):
     @property
     def info(self):
         if not self._info:
-            self._info = self._db.get_server_info(
+                self._info = self._db.get_server_info(
                 "%s/%s" % (self.servername, self.name))
         return self._info
 
@@ -317,6 +332,9 @@ class InstanceDict(AbstractTangoDict):
 
     def add(self, classname, devices):
         self.parent.add(self.name, classname, devices)
+
+    def delete(self):
+        self.parent.delete(self.name)
 
 
 class ClassDict(AbstractTangoDict):
@@ -344,8 +362,11 @@ class ClassDict(AbstractTangoDict):
     def add(self, devices):
         self.parent.add(self.name, devices)
 
+    def delete(self, devicename):
+        self._db.delete_device(devicename)
+
     def __delitem__(self, devicename):
-        self._db.remove_device(devicename)
+        self.delete(devicename)
 
 
 class DeviceDict(AbstractTangoDict):
@@ -353,20 +374,19 @@ class DeviceDict(AbstractTangoDict):
     def __init__(self, db, name, **kwargs):
         self.name = name
         self._info = None
+        self._proxy = None
         AbstractTangoDict.__init__(self, db, **kwargs)
-        #self.info
-        # try:
-        #     self["attributes"] = self.attributes = AttributesDict(db, name, ttl=ttl)
-        # except PyTango.DevFailed:
-        #     pass
 
     def make_child(self, name):
-        if name != "properties":
-            raise ValueError
-        return PropertiesDict(self._db, self.name, parent=self, ttl=self._ttl)
+        if name == "properties":
+            return PropertiesDict(self._db, self.name, parent=self, ttl=self._ttl)
+        if name == "attributes":
+            return AttributesDict(self._db, self.name, parent=self, ttl=self._ttl)
+        if name == "commands":
+            return CommandsDict(self._db, self.name, parent=self, ttl=self._ttl)
 
     def get_items_from_db(self):
-        return ["properties"]
+        return ["properties", "attributes", "commands"]
 
     def make_parent(self):
         cls = self.info.class_name
@@ -378,10 +398,23 @@ class DeviceDict(AbstractTangoDict):
         return self.parent.path + (self.name,)
 
     @property
+    def proxy(self):
+        if self._proxy:
+            return self._proxy
+        self._proxy = PyTango.DeviceProxy(self.name)
+        return self._proxy
+
+    @property
     def info(self):
         if not self._info:
-            self._info = self._db.get_device_info(self.name)
+            try:
+                self._info = self._db.get_device_info(self.name)
+            except PyTango.DevFailed:
+                return None
         return self._info
+
+    def delete(self):
+        self.parent.delete(self.name)
 
     # def refresh(self, recurse=False):
     #     self._info = self._db.get_device_info(self.name)
@@ -392,41 +425,108 @@ class DeviceDict(AbstractTangoDict):
     #     return {"properties": self.properties.to_dict()}
 
 
-# class AttributesDict(AbstractTangoDict):
+class AttributesDict(AbstractTangoDict):
 
-#     child_type = "attribute"
+    child_type = "attribute"
 
-#     def __init__(self, db, devicename, **kwargs):
-#         self._db = db
-#         self.devicename = devicename
-#         AbstractTangoDict.__init__(self, db, **kwargs)
+    def __init__(self, db, devicename, **kwargs):
+        self.devicename = devicename
+        self.name = "attributes"
+        AbstractTangoDict.__init__(self, db, **kwargs)
 
-#     def get_items_from_db(self):
-#         self._proxy = Device(self.devicename)
-#         attrs = self._proxy.getHWObj().get_attribute_list()
-#         return list(attrs)
+    def get_items_from_db(self):
+        attrs = self.parent.proxy.get_attribute_list()
+        return list(attrs)
 
-#     def make_child(self, attrname):
-#         return DeviceAttribute(self.devicename, attrname)
+    def make_child(self, attrname):
+        return DeviceAttribute(self.devicename, attrname, self.parent)
 
 
-# class DeviceAttribute(object):
+class DeviceAttribute(object):
 
-#     def __init__(self, devicename, name):
-#         self.devicename = devicename
-#         self.name = name
-#         self._history = []
-#         self._attribute = Attribute("{}/{}".format(self.devicename, self.name))
-#         self.data = self._attribute.read()
-#         self._attribute.addListener(self._update_value)
+    def __init__(self, devicename, name, parent):
+        self.devicename = devicename
+        self.name = name
+        self.parent = parent
+        self._proxy = None
+        self._config = None
+        #self.data = self._attribute.read()
+        self._last_read = 0
+        self._value = None
 
-#     def _update_value(self, evt_src, evt_type, evt_data):
-#         if evt_type in (PyTango.EventType.CHANGE_EVENT,
-#                         PyTango.EventType.PERIODIC_EVENT):
-#             self.data = evt_data
+    @property
+    def config(self):
+        if self._config:
+            return self._config
+        self._config = self.parent.proxy.get_attribute_config(self.name)
+        return self._config
 
-#     def refresh(self):
-#         pass
+    def keys(self):
+        return [attr for attr in dir(self.config)
+                if not attr.startswith("__")]
+        # filter out some other stuff too?
+
+    # add all config items as attributes
+    def __getattr__(self, attr):
+        if attr == "value":
+            return self.value
+        if hasattr(self.config, attr):
+            return getattr(self.config, attr)
+
+    @property
+    def value(self):
+        t = time()
+        if t < self._last_read + 1.0:
+            return self._value
+        self._value = self.parent.proxy.read_attribute(self.name).value
+        self._last_read = t
+        return self._value
+
+
+class CommandsDict(AbstractTangoDict):
+
+    child_type = "command"
+
+    def __init__(self, db, devicename, **kwargs):
+        self._db = db
+        self.devicename = devicename
+        self.name = "commands"
+        self._proxy = None
+        AbstractTangoDict.__init__(self, db, **kwargs)
+
+    @property
+    def proxy(self):
+        if self._proxy:
+            return self._proxy
+        self._proxy = PyTango.DeviceProxy(self.devicename)
+        return self._proxy
+
+    def get_items_from_db(self):
+        commands = self.proxy.command_list_query()
+        return [cmd.cmd_name for cmd in commands]
+
+    def make_child(self, cmdname):
+        return DeviceCommand(self.devicename, cmdname, self.parent)
+
+
+class DeviceCommand(object):
+
+    def __init__(self, devicename, name, parent):
+        self.devicename = devicename
+        self.name = name
+        self.parent = parent
+        self._info = None
+
+    def run(self, param):
+        result = self.parent.proxy.command_inout(self.name, param)
+        return result
+
+    @property
+    def info(self):
+        if self._info:
+            return self._info
+        self._info = self.parent.proxy.command_query(self.name)
+        return self._info
 
 
 class PropertiesDict(AbstractTangoDict):
@@ -456,6 +556,7 @@ class PropertiesDict(AbstractTangoDict):
                     for name, prop in self.items() if prop)
 
     def add(self, props, refresh=True):
+        print "add", self.devicename, props
         self._db.put_device_property(self.devicename, props)
         if refresh:
             self.refresh()
@@ -479,7 +580,7 @@ class DeviceProperty(object):
         self._db = db
         self.devicename = devicename
         self.name = name
-        self._parent = ref(parent)
+        self._parent = parent
         self._history = []
         self.value = None
         self.refresh()
@@ -498,7 +599,7 @@ class DeviceProperty(object):
 
     @property
     def parent(self):
-        return self._parent()
+        return self._parent
 
     def __len__(self):
         return len(self.value) if self.value else 0
@@ -563,9 +664,5 @@ class TangoDict(dict):
             return self
         target = self
         for part in path:
-            try:
-                target = target[str(part)]
-            except KeyError:
-                #self.logger.debug("%r does not contain '%s'", target, part)
-                return {}
+            target = target[str(part)]
         return target
