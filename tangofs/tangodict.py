@@ -15,6 +15,7 @@ from time import time
 import PyTango
 
 from ttldict import TTLDict
+from caseless import CaselessDictionary
 
 
 SERVER_REGEX = "^([_-\w]+)/([_-\w]+)$"
@@ -61,7 +62,7 @@ class AbstractTangoDict(dict):
         if ttl:
             self._dict_class = partial(TTLDict, default_ttl=ttl)
         else:
-            self._dict_class = dict
+            self._dict_class = CaselessDictionary
         self._cache = self._dict_class()
         # self.refresh()
         self._id = next(idgen)
@@ -177,6 +178,7 @@ class DomainsDict(AbstractTangoDict):
     child_type = "domain"
 
     def get_items_from_db(self):
+        self.name = "devices"
         result = self._db.get_device_domain("*")
         return result.value_string
 
