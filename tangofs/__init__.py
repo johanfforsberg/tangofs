@@ -99,7 +99,7 @@ class TangoFS(LoggingMixIn, Operations):
             timestamp = parser.parse(target.history[-1].get_date())
             return self.make_node(
                 mode=stat.S_IFREG, timestamp=unix_time(timestamp),
-                size=len("\n".join(target.value)))
+                size=len("\n".join(target.value)) + 1)
         elif isinstance(target, DeviceCommand):
             # TODO: use the real size
             return self.make_node(mode=stat.S_IFREG | 755, size=1000)
@@ -154,7 +154,7 @@ class TangoFS(LoggingMixIn, Operations):
         if isinstance(target, DeviceCommand):
             return EXE.format(device=target.devicename, command=target.name)
         if isinstance(target, DeviceProperty):
-            return "\n".join(target.value)
+            return "\n".join(target.value) + "\n"
 
     def write(self, path, data, offset, fh):
         "Write data to a file"
@@ -210,6 +210,12 @@ class TangoFS(LoggingMixIn, Operations):
         # somehow save the fact that we're appending
         # and not overwriting...
         return 0
+
+    def flush(self, path, fh):
+        print "flush", path
+
+    def fsync(self, path, fdatasync, fh):
+        print "fsync", path, fdatasync
 
 
 def main(directory):
