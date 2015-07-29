@@ -111,13 +111,12 @@ class AbstractTangoDict(dict):
         if not self._cache:
             self.refresh()
         try:
+            if name not in self._cache:
+                raise KeyError("No such child to %s" % self.name)
             item = self._cache.get(name)
-            if not item:
-                if name not in self._cache:
-                    raise KeyError("No such child to %s" % self.name)
+            if item is None:
                 item = self.make_child(name)
                 self._cache[name] = item
-                print "put", name, item, "in cache"
             return item
         except (ValueError, PyTango.DevFailed) as e:
             raise KeyError(e)
@@ -314,7 +313,7 @@ class InstanceDict(AbstractTangoDict):
     @property
     def info(self):
         if not self._info:
-                self._info = self._db.get_server_info(
+            self._info = self._db.get_server_info(
                 "%s/%s" % (self.servername, self.name))
         return self._info
 
@@ -462,8 +461,8 @@ class DeviceAttribute(object):
         return self._config
 
     def keys(self):
-        return [attr for attr in dir(self.config)
-                if not attr.startswith("__")]
+        return ["value"] + [attr for attr in dir(self.config)
+                            if not attr.startswith("__")]
         # filter out some other stuff too?
 
     # add all config items as attributes
@@ -556,7 +555,6 @@ class PropertiesDict(AbstractTangoDict):
                     for name, prop in self.items() if prop)
 
     def add(self, props, refresh=True):
-        print "add", self.devicename, props
         self._db.put_device_property(self.devicename, props)
         if refresh:
             self.refresh()
