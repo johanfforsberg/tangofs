@@ -1,17 +1,17 @@
-from datetime import datetime
-from errno import ENOENT
+import logging
 import os
 import stat
+from errno import ENOENT
 from time import time
-from dateutil import parser
-import tempfile
-import logging
 
-from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
-from tangodict import (TangoDict, DeviceProperty, DeviceDict, ClassDict,
-                       PropertiesDict, InstanceDict,
-                       DeviceAttribute, DeviceCommand)
+from datetime import datetime
+from tangodict import ClassDict, DeviceAttribute, DeviceCommand, DeviceDict, \
+    DeviceProperty, InstanceDict, PropertiesDict, TangoDict
+
 import PyTango
+from dateutil import parser
+from fuse import FUSE, FuseOSError, LoggingMixIn, Operations
+
 
 # load the command script template
 with open("/".join(__path__) + "/command.py") as f:
@@ -209,6 +209,12 @@ class TangoFS(LoggingMixIn, Operations):
         # It must be a set of flags. Then we need to
         # somehow save the fact that we're appending
         # and not overwriting...
+
+        # TODO: "ls something" always works regardless
+        # of the existence of "something". Open() is the only
+        # thing that gets called. I guess we need to check
+        # existance if flags are not writing, but what to
+        # return?
         return 0
 
     def flush(self, path, fh):
@@ -218,10 +224,6 @@ class TangoFS(LoggingMixIn, Operations):
         print "fsync", path, fdatasync
 
 
-def main(directory):
-    FUSE(TangoFS(), directory, foreground=True, nothreads=True)
-
-
-if __name__ == '__main__':
-    import sys
-    main(sys.argv[1])
+def main(mountpoint):
+    logging.getLogger().setLevel(logging.DEBUG)
+    FUSE(TangoFS(), mountpoint, foreground=True, nothreads=False)
