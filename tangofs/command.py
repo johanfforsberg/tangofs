@@ -1,5 +1,6 @@
 #!/usr/bin/python
 "A simple script that runs {command}() on {device}"
+
 import sys
 sys.path = sys.path[1:]  # this is a HACK to prevent python from looking
                          # in PWD for modules. Find a better way.
@@ -16,4 +17,6 @@ parser = optparse.OptionParser(usage=USAGE)
 options, args = parser.parse_args()
 
 # TODO: handle arguments
-print proxy.{command}()
+result = proxy.{command}()
+if result is not None:
+    print result
