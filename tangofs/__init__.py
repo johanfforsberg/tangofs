@@ -1,3 +1,4 @@
+import StringIO
 import logging
 import os
 import stat
@@ -158,7 +159,7 @@ class TangoFS(LoggingMixIn, Operations):
 
     def write(self, path, data, offset, fh):
         "Write data to a file"
-        print "write", path
+        print "write", path, offset, fh
         # TODO: currently we just overwrite, figure out append
         try:
             target = self._get_path(path)
@@ -169,7 +170,14 @@ class TangoFS(LoggingMixIn, Operations):
                 # creating a new property
                 target.add({str(prop): data.split()})
         if isinstance(target, DeviceProperty):
-            target.set_value(data.split())
+            if offset:
+                olddata = "\n".join(target.value) + "\n"
+                newdata = (olddata[:offset] + data +
+                           olddata[offset + len(data):])
+                target.set_value(newdata.split())
+            else:
+                target.set_value(data.split())
+
         return len(data)  # ?
 
     def create(self, path, mode, fi=None):
@@ -215,13 +223,17 @@ class TangoFS(LoggingMixIn, Operations):
         # thing that gets called. I guess we need to check
         # existance if flags are not writing, but what to
         # return?
-        return 0
+
+        return flags
 
     def flush(self, path, fh):
         print "flush", path
 
     def fsync(self, path, fdatasync, fh):
         print "fsync", path, fdatasync
+
+    def release(self, path, flags):
+        print "release", path, flags
 
 
 def main(mountpoint):
