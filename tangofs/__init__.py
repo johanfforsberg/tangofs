@@ -1,6 +1,6 @@
-import StringIO
 import logging
 import os
+import re
 import stat
 from errno import ENOENT
 from time import time
@@ -13,10 +13,19 @@ import PyTango
 from dateutil import parser
 from fuse import FUSE, FuseOSError, LoggingMixIn, Operations
 
+from convert import make_tango_type
 
 # load the command script template
 with open("/".join(__path__) + "/command.py") as f:
     EXE = f.read()
+
+
+# This is a bit of a hack, to allow sed to write temporary files
+# Not sure if this is a good idea... but sed -i is so convenient
+SEDTMP = re.compile("sed\w{6}")
+
+# constants
+PROPERTY = 0
 
 
 def unix_time(dt):
@@ -27,9 +36,9 @@ def unix_time(dt):
 
 class TangoFS(LoggingMixIn, Operations):
 
-    def __init__(self):
-        self.tree = TangoDict()
-        self.tmp = {}
+    def __init__(self, logger=None):
+        self.tree = TangoDict(logger=logger)  # Tango interaction layer
+        self.tmp = {}  # for keeping track of temporary stuff "in flight"
 
     def _get_path(self, path):
         # decode device slashes
@@ -39,7 +48,7 @@ class TangoFS(LoggingMixIn, Operations):
 
     @staticmethod
     def make_node(mode, size=0, timestamp=None):
-        # TODO: find something meaningful to do with all this
+        # TODO: find out the meaning of all this and use it for something
         timestamp = timestamp or time()
         return {
             'st_mode': mode,
@@ -51,18 +60,18 @@ class TangoFS(LoggingMixIn, Operations):
             'st_size': size,
             'st_atime': timestamp,  # last access time in seconds
             'st_mtime': timestamp,  # last modified time in seconds
-            'st_ctime': timestamp,
+            'st_ctime': timestamp,  # creation time?
             # st_blocks is the amount of blocks of the file object, and
             # depends on the block size of the file system (here: 512
             # Bytes)
             'st_blocks': int((size + 511) / 512)
         }
 
-    # # #  FUSE API  # # #
+    # # #  Filesystem API  # # #
 
     def getattr(self, path, fh=None):
         "getattr gets run all the time"
-
+        print "getattr", path, fh
         try:
             # Firs check if the path is directly accessible
             target = self._get_path(path)
@@ -72,34 +81,34 @@ class TangoFS(LoggingMixIn, Operations):
                 parent, child = path.rsplit("/", 1)
                 target = self._get_path(parent)
                 if isinstance(target, DeviceAttribute):
-                    # Note: This is inefficient since we'll read the attribute twice.
-                    # Once here to get the size, and once in read()
-                    size = len(str(getattr(target, child))) + 1  # to add newline
-                else:
-                    size = 0
-                mode = stat.S_IFREG
-                return self.make_node(mode=mode, size=size)
-            except KeyError:
+                    # store the value in tmp so we don't have to read it
+                    # again in the read method. This is all supposed to be
+                    # an atomic operation, right?
+                    value = self.tmp[path] = str(getattr(target, child)) + "\n"
+                    size = len(value)
+                    mode = stat.S_IFREG
+                    return self.make_node(mode=mode, size=size)
                 # OK, what we're looking for is not in the DB. Let's
                 # check if there is any pending creation operations going
                 # on
-                try:
-                    placeholder = self.tmp.pop(path)
-                    if placeholder == "PROPERTY":
-                        # This means the user is creating something
-                        return self.make_node(mode=stat.S_IFREG)
-                    # ... other types of pending operations ...
-                    else:
-                        print "This can't happen..?!"
-                except KeyError:
+                elif path in self.tmp:
+                    if self.tmp[path] == PROPERTY:
+                        # This means the user is creating a property
+                        del self.tmp[path]
+                    # ... insert other types of pending operations ...
+                    return self.make_node(mode=stat.S_IFREG)
+                else:
+                    # none
                     raise FuseOSError(ENOENT)
+            except KeyError:
+                raise FuseOSError(ENOENT)
 
         # properties correspond to files
         if type(target) == DeviceProperty:
             # use last history date as timestamp
-            timestamp = parser.parse(target.history[-1].get_date())
+            #timestamp = parser.parse(target.history[-1].get_date())
             return self.make_node(
-                mode=stat.S_IFREG, timestamp=unix_time(timestamp),
+                mode=stat.S_IFREG,  # timestamp=unix_time(timestamp),
                 size=len("\n".join(target.value)) + 1)
         elif isinstance(target, DeviceCommand):
             # TODO: use the real size
@@ -142,15 +151,18 @@ class TangoFS(LoggingMixIn, Operations):
 
     def read(self, path, size, offset, fh):
         print "read", path, size, offset
+        if path in self.tmp:
+            return self.tmp.pop(path)
         try:
             target = self._get_path(path)
         except KeyError:
-            print "no such path", path
             raise FuseOSError(ENOENT)
         except TypeError:  # ugh
             parent, child = path.rsplit("/", 1)
             target = self._get_path(parent)
             if isinstance(target, DeviceAttribute):
+                # really we should never get here... the value should
+                # always be in tmp since self.getattr()
                 return str(getattr(target, child)) + "\n"
         if isinstance(target, DeviceCommand):
             return EXE.format(device=target.devicename, command=target.name)
@@ -160,15 +172,37 @@ class TangoFS(LoggingMixIn, Operations):
     def write(self, path, data, offset, fh):
         "Write data to a file"
         print "write", path, offset, fh
-        # TODO: currently we just overwrite, figure out append
         try:
             target = self._get_path(path)
         except KeyError:
-            parent, prop = path.rsplit("/", 1)
+            parent, prop = os.path.split(path)
             target = self._get_path(parent)
             if isinstance(target, PropertiesDict):
                 # creating a new property
-                target.add({str(prop): data.split()})
+                if SEDTMP.match(prop):
+                    if offset:  # change/append
+                        olddata = self.tmp[path]
+                        newdata = (olddata[:offset] + data +
+                                   olddata[offset + len(data):])
+                        self.tmp[path] = newdata
+                    else:
+                        self.tmp[path] = data
+                else:
+                    target.add({str(prop): data.split()})
+        except TypeError:
+            print "writing to attribute"
+            parent, attr = os.path.split(path)
+            target = self._get_path(parent)
+            if isinstance(target, DeviceAttribute):
+                print target
+                dtype = target.config.data_type
+                try:
+                    value = make_tango_type(dtype, data)
+                    setattr(target, attr, value)
+                    return len(data)
+                except (ValueError, PyTango.DevFailed) as e:
+                    print e
+                    raise FuseOSError(ENOENT)
         if isinstance(target, DeviceProperty):
             if offset:
                 olddata = "\n".join(target.value) + "\n"
@@ -186,12 +220,19 @@ class TangoFS(LoggingMixIn, Operations):
         # remember them. Otherwise getattr will fail. We could
         # first create an empty property I guess, but that would
         # be inefficient. This feels a bit hacky, though...
-        self.tmp[path] = "PROPERTY"
+        parent, child = os.path.split(path)
+        if SEDTMP.match(child):
+            self.tmp[path] = ""
+        else:
+            self.tmp[path] = PROPERTY
         return 0
 
     def unlink(self, path):
         # remove a file
         print "unlink", path
+        if path in self.tmp:
+            del self.tmp[path]
+            return 0
         target = self._get_path(path)
         if isinstance(target, DeviceProperty):
             target.delete()
@@ -208,7 +249,7 @@ class TangoFS(LoggingMixIn, Operations):
             target.delete()
 
     def truncate(self, path, length, fh=None):
-        # I don't think this will be very useful..?
+        # I don't think this will be very useful
         pass
 
     def open(self, path, flags):
@@ -235,7 +276,45 @@ class TangoFS(LoggingMixIn, Operations):
     def release(self, path, flags):
         print "release", path, flags
 
+    def mknod(*args):
+        print "mknod", args
+
+    def rename(self, oldpath, newpath):
+        print "rename", oldpath, newpath
+        oldparent, oldchild = os.path.split(oldpath)
+        newparent, newchild = os.path.split(newpath)
+        if oldpath in self.tmp:
+            # we are renaming a temporary file!
+            # presumably it's sed
+            value = self.tmp[oldpath]
+            print "sed", value
+            if SEDTMP.match(newchild):
+                self.tmp[newpath] = value
+                return 0
+            value = value.split()
+        else:
+            source = self._get_path(oldpath)
+            if isinstance(source, DeviceProperty):
+                value = source.value
+            else:
+                # can't move anything else than properties ATM
+                raise FuseOSError(ENOENT)
+        target = self._get_path(newparent)
+        if isinstance(target, PropertiesDict):
+            target.add({str(newchild): value})
+        else:
+            raise FuseOSError(ENOENT)
+
+    def readlink(self, *args):
+        # might be useful for aliases..?
+        print "readlink", args
+
+    def chmod(self, *args):
+        # noop, but needs to exist to prevent errors
+        print "chmod", args
+
 
 def main(mountpoint):
-    logging.getLogger().setLevel(logging.DEBUG)
-    FUSE(TangoFS(), mountpoint, foreground=True, nothreads=False)
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+    FUSE(TangoFS(logger), mountpoint, foreground=True, nothreads=False)

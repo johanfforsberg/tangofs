@@ -64,7 +64,6 @@ class AbstractTangoDict(dict):
         else:
             self._dict_class = CaselessDictionary
         self._cache = self._dict_class()
-        # self.refresh()
         self._id = next(idgen)
 
     def refresh(self, recurse=False):
@@ -225,9 +224,9 @@ class MembersDict(AbstractTangoDict):
 class ServersDict(AbstractTangoDict):
 
     child_type = "server"
+    name = "servers"
 
     def get_items_from_db(self):
-        self.name = "servers"
         result = self._db.get_server_name_list()
         return result.value_string
 
@@ -477,11 +476,15 @@ class DeviceAttribute(object):
     @property
     def value(self):
         t = time()
-        if t < self._last_read + 1.0:
+        if t < self._last_read + 0.1:  # TODO: make this more sophisticated?
             return self._value
         self._value = self.parent.proxy.read_attribute(self.name).value
         self._last_read = t
         return self._value
+
+    @value.setter
+    def value(self, value):
+        self.parent.proxy.write_attribute(self.name, value)
 
 
 class CommandsDict(AbstractTangoDict):
@@ -595,7 +598,8 @@ class DeviceProperty(object):
 
     @property
     def history(self):
-        return self._db.get_device_property_history(self.devicename, self.name)
+        return []
+        #return self._db.get_device_property_history(self.devicename, self.name)
 
     @property
     def parent(self):
@@ -626,6 +630,7 @@ class ObjectWrapper(object):
         self.target = target
         self.calls = []
         self.logger = logger
+        print self.logger
 
     def __getattr__(self, attr):
 
@@ -637,7 +642,8 @@ class ObjectWrapper(object):
                                   ", ".join(chain(('"%s"' % a for a in args),
                                                   ("%s='%s'" % i
                                                    for i in kwargs.items()))))
-                #self.logger.debug(fmt)
+                #self.logger.info(fmt)
+                print "*", fmt
             if self.target:
                 return getattr(self.target, attr)(*args, **kwargs)
 
