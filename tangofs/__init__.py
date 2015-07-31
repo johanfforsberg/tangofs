@@ -5,15 +5,15 @@ import stat
 from errno import ENOENT
 from time import time
 
+from convert import make_tango_type
 from datetime import datetime
 from tangodict import ClassDict, DeviceAttribute, DeviceCommand, DeviceDict, \
-    DeviceProperty, InstanceDict, PropertiesDict, TangoDict
+    DeviceProperty, InstanceDict, PropertiesDict, TangoDict, ServerDict
 
 import PyTango
 from dateutil import parser
 from fuse import FUSE, FuseOSError, LoggingMixIn, Operations
 
-from convert import make_tango_type
 
 # load the command script template
 with open("/".join(__path__) + "/command.py") as f:
@@ -138,8 +138,8 @@ class TangoFS(LoggingMixIn, Operations):
         nodes = [name.replace("/", "%") for name in target.keys()]
         if isinstance(target, DeviceDict):
             nodes.append(".info")
-        if isinstance(target, PropertiesDict):
-            nodes.extend([node + ".history" for node in nodes])
+        # if isinstance(target, PropertiesDict):
+        #     nodes.extend([node + ".history" for node in nodes])
         return [".", ".."] + nodes
 
     def mkdir(self, path, mode):
@@ -175,6 +175,7 @@ class TangoFS(LoggingMixIn, Operations):
         try:
             target = self._get_path(path)
         except KeyError:
+            # writing to somethin
             parent, prop = os.path.split(path)
             target = self._get_path(parent)
             if isinstance(target, PropertiesDict):
@@ -190,11 +191,11 @@ class TangoFS(LoggingMixIn, Operations):
                 else:
                     target.add({str(prop): data.split()})
         except TypeError:
-            print "writing to attribute"
+            # a bit crude, but since DeviceAttribute is not a dict
+            # we can't access things like e.g. ["value"]
             parent, attr = os.path.split(path)
             target = self._get_path(parent)
             if isinstance(target, DeviceAttribute):
-                print target
                 dtype = target.config.data_type
                 try:
                     value = make_tango_type(dtype, data)
@@ -294,16 +295,16 @@ class TangoFS(LoggingMixIn, Operations):
             value = value.split()
         else:
             source = self._get_path(oldpath)
+            target = self._get_path(newparent)
             if isinstance(source, DeviceProperty):
                 value = source.value
+                if isinstance(target, PropertiesDict):
+                    target.add({str(newchild): value})
+            elif isinstance(source, InstanceDict):
+                source.rename(str(newchild))
             else:
-                # can't move anything else than properties ATM
+                # immovable object
                 raise FuseOSError(ENOENT)
-        target = self._get_path(newparent)
-        if isinstance(target, PropertiesDict):
-            target.add({str(newchild): value})
-        else:
-            raise FuseOSError(ENOENT)
 
     def readlink(self, *args):
         # might be useful for aliases..?

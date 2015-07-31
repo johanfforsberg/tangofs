@@ -289,6 +289,11 @@ class ServerDict(AbstractTangoDict):
     def add(self, instname, classname, devices):
         self.parent.add(self.name, instname, classname, devices)
 
+    def rename_instance(self, oldname, newname):
+        self._db.rename_server("%s/%s" % (self.name, oldname),
+                               "%s/%s" % (self.name, newname))
+        self.refresh()
+
     def __delitem__(self, instancename):
         self.delete(instancename)
 
@@ -336,6 +341,9 @@ class InstanceDict(AbstractTangoDict):
     def delete(self):
         self.parent.delete(self.name)
 
+    def rename(self, name):
+        self.parent.rename_instance(self.name, name)
+        self.name = name
 
 class ClassDict(AbstractTangoDict):
 
@@ -457,33 +465,42 @@ class DeviceAttribute(object):
     @property
     def config(self):
         if self._config:
+            print self._config
             return self._config
         self._config = self.parent.proxy.get_attribute_config(self.name)
         return self._config
 
     def keys(self):
-        return ["value"] + [attr for attr in dir(self.config)
+        keys = ["value"] + [attr for attr in dir(self.config)
                             if not attr.startswith("__")]
+        if self.config.writable == PyTango.AttrWriteType.WRITE:
+            keys += ["w_value"]
+        return keys
         # filter out some other stuff too?
 
     # add all config items as attributes
     def __getattr__(self, attr):
-        if attr == "value":
-            return self.value
+        if attr == "data_type":
+            return str(PyTango.ArgType.values[self.config.data_type])
         if hasattr(self.config, attr):
             return getattr(self.config, attr)
 
     @property
     def value(self):
-        t = time()
-        if t < self._last_read + 0.1:  # TODO: make this more sophisticated?
-            return self._value
         self._value = self.parent.proxy.read_attribute(self.name).value
-        self._last_read = t
         return self._value
 
     @value.setter
     def value(self, value):
+        self.parent.proxy.write_attribute(self.name, value)
+
+    @property
+    def w_value(self):
+        self._w_value = self.parent.proxy.read_attribute(self.name).w_value
+        return self._w_value
+
+    @w_value.setter
+    def w_value(self, value):
         self.parent.proxy.write_attribute(self.name, value)
 
 
