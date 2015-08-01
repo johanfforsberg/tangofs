@@ -106,10 +106,11 @@ class TangoFS(LoggingMixIn, Operations):
         # properties correspond to files
         if type(target) == DeviceProperty:
             # use last history date as timestamp
+            value = self.tmp[path] = "\n".join(target.value) + "\n"
             #timestamp = parser.parse(target.history[-1].get_date())
             return self.make_node(
                 mode=stat.S_IFREG,  # timestamp=unix_time(timestamp),
-                size=len("\n".join(target.value)) + 1)
+                size=len(value))
         elif isinstance(target, DeviceCommand):
             # TODO: use the real size
             return self.make_node(mode=stat.S_IFREG | 755, size=1000)
@@ -171,7 +172,7 @@ class TangoFS(LoggingMixIn, Operations):
 
     def write(self, path, data, offset, fh):
         "Write data to a file"
-        print "write", path, offset, fh
+        print "write", path, data, offset, fh
         try:
             target = self._get_path(path)
         except KeyError:
@@ -189,7 +190,7 @@ class TangoFS(LoggingMixIn, Operations):
                     else:
                         self.tmp[path] = data
                 else:
-                    target.add({str(prop): data.split()})
+                    target.add({str(prop): data.strip().split("\n")})
         except TypeError:
             # a bit crude, but since DeviceAttribute is not a dict
             # we can't access things like e.g. ["value"]
@@ -209,9 +210,9 @@ class TangoFS(LoggingMixIn, Operations):
                 olddata = "\n".join(target.value) + "\n"
                 newdata = (olddata[:offset] + data +
                            olddata[offset + len(data):])
-                target.set_value(newdata.split())
+                target.value = newdata.strip().split("\n")
             else:
-                target.set_value(data.split())
+                target.value = data.strip().split("\n")
 
         return len(data)  # ?
 
@@ -231,9 +232,7 @@ class TangoFS(LoggingMixIn, Operations):
     def unlink(self, path):
         # remove a file
         print "unlink", path
-        if path in self.tmp:
-            del self.tmp[path]
-            return 0
+        self.tmp.pop(path)
         target = self._get_path(path)
         if isinstance(target, DeviceProperty):
             target.delete()
@@ -284,23 +283,21 @@ class TangoFS(LoggingMixIn, Operations):
         print "rename", oldpath, newpath
         oldparent, oldchild = os.path.split(oldpath)
         newparent, newchild = os.path.split(newpath)
-        if oldpath in self.tmp:
+        if oldpath in self.tmp and SEDTMP.match(oldchild):
             # we are renaming a temporary file!
-            # presumably it's sed
-            value = self.tmp[oldpath]
-            print "sed", value
+            # presumably it's created by sed
+            value = self.tmp.pop(oldpath)
             if SEDTMP.match(newchild):
                 self.tmp[newpath] = value
                 return 0
-            value = value.split()
+            else:
+                value = value.strip().split("\n")
+                target = self._get_path(newpath)
+                if isinstance(target, DeviceProperty):
+                    target.value = value
         else:
             source = self._get_path(oldpath)
-            target = self._get_path(newparent)
-            if isinstance(source, DeviceProperty):
-                value = source.value
-                if isinstance(target, PropertiesDict):
-                    target.add({str(newchild): value})
-            elif isinstance(source, InstanceDict):
+            if isinstance(source, (DeviceProperty, InstanceDict)):
                 source.rename(str(newchild))
             else:
                 # immovable object

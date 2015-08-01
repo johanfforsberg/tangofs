@@ -258,7 +258,7 @@ class ServersDict(AbstractTangoDict):
             for dev in devinfos:
                 self._db.add_device(dev)
         # finally we must refresh the tree to see the new stuff
-        self[srvname][instname][classname].refresh()
+        self[srvname][instname][classname]._cache.clear()
 
     def delete(self, srvname, instname):
         self[srvname].delete(instname)
@@ -292,14 +292,14 @@ class ServerDict(AbstractTangoDict):
     def rename_instance(self, oldname, newname):
         self._db.rename_server("%s/%s" % (self.name, oldname),
                                "%s/%s" % (self.name, newname))
-        self.refresh()
+        self._cache.clear()
 
     def __delitem__(self, instancename):
         self.delete(instancename)
 
     def delete(self, instancename):
         self._db.delete_server("%s/%s" % (self.servername, self.name))
-        self.refresh()
+        self._cache.clear()
 
 
 class InstanceDict(AbstractTangoDict):
@@ -576,22 +576,20 @@ class PropertiesDict(AbstractTangoDict):
         return dict((name, prop.value)
                     for name, prop in self.items() if prop)
 
-    def add(self, props, refresh=True):
+    def add(self, props):
+        print "add", self.name, props, [type(value) for value in props.values()]
         self._db.put_device_property(self.devicename, props)
-        if refresh:
-            self.refresh()
+        self._cache.clear()
 
-    def remove(self, prop, refresh=True):
+    def delete(self, prop):
         self._db.delete_device_property(self.devicename, prop)
-        if refresh:
-            self.refresh()
-            #logging.debug("keys: %r", self.keys())
+        self._cache.clear()
 
     def __setitem__(self, key, value):
         self.add({key: value})
 
     def __delitem__(self, key):
-        self.remove(key)
+        self.delete(key)
 
 
 class DeviceProperty(object):
@@ -601,41 +599,55 @@ class DeviceProperty(object):
         self.devicename = devicename
         self.name = name
         self._parent = parent
-        self._history = []
-        self.value = None
-        self.refresh()
+        self._history = None
+        self._value = None
+        #self.refresh()
 
-    def refresh(self):
-        result = self._db.get_device_property(self.devicename, self.name)
-        self.value = list(result[self.name])
+    # def refresh(self):
+    #     result = self._db.get_device_property(self.devicename, self.name)
+    #     self.value = list(result[self.name])
 
     @property
     def path(self):
         return self.parent.path + (self.name,)
 
     @property
+    def value(self):
+        if self._value is not None:
+            return self._value
+        self._value = list(self._db.get_device_property(
+            self.devicename, self.name)[self.name])
+        return self._value
+
+    @value.setter
+    def value(self, value):
+        self._db.put_device_property(self.devicename, {self.name: value})
+        self._value = value
+        self._history = None
+
+    @property
     def history(self):
-        return []
-        #return self._db.get_device_property_history(self.devicename, self.name)
+        if self._history:
+            return self._history
+        self._history = self._db.get_device_property_history(
+            self.devicename, self.name)
+        return self._history
 
     @property
     def parent(self):
         return self._parent
 
     def __len__(self):
-        return len(self.value) if self.value else 0
+        return len(self.value)
 
-    def set_value(self, value):
-        self._db.put_device_property(self.devicename, {self.name: value})
-        self.refresh()
+    def rename(self, name):
+        if name != self.name:
+            self.parent.add({name: self.value})
+            self.parent.delete(self.name)
+            self.name = name
 
-    def set_name(self, name):
-        self.parent.remove(self.name, refresh=False)
-        self.name = name
-        self.parent.add({name: self.value})
-
-    def remove(self):
-        self.parent.remove(self.name)
+    def delete(self):
+        self.parent.delete(self.name)
 
 
 class ObjectWrapper(object):
@@ -653,11 +665,12 @@ class ObjectWrapper(object):
 
         def method(attr, *args, **kwargs):
             call = (attr, args, kwargs)
+            print call
             self.calls.append(call)
             if self.logger:
                 fmt = "%s(%s)" % (attr,
-                                  ", ".join(chain(('"%s"' % a for a in args),
-                                                  ("%s='%s'" % i
+                                  ", ".join(chain(("%r" % a for a in args),
+                                                  ("%s=%r" % i
                                                    for i in kwargs.items()))))
                 #self.logger.info(fmt)
                 print "*", fmt
