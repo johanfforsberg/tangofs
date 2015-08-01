@@ -7,8 +7,9 @@ from time import time
 
 from convert import make_tango_type
 from datetime import datetime
-from tangodict import ClassDict, DeviceAttribute, DeviceCommand, DeviceDict, \
-    DeviceProperty, InstanceDict, PropertiesDict, TangoDict, ServerDict
+from tangodict import (ClassDict, DeviceAttribute, DeviceCommand, DeviceDict,
+                       DeviceProperty, InstanceDict, PropertiesDict, TangoDict,
+                       ServerDict, AttributesDict)
 
 import PyTango
 from dateutil import parser
@@ -122,8 +123,14 @@ class TangoFS(LoggingMixIn, Operations):
             mode = stat.S_IFDIR
             if target.info and target.info.exported:
                 # If the device is exported, mark the node as executable
-                mode |= 777
+                mode |= (stat.S_IEXEC)
             return self.make_node(mode=mode, timestamp=unix_time(timestamp))
+        elif isinstance(target, DeviceAttribute):
+            # set mode according to whether the attr is read/writable
+            mode = stat.S_IFDIR | stat.S_IREAD | stat.S_IRGRP | stat.S_IROTH
+            if target.writable != PyTango.AttrWriteType.READ:
+                mode |= (stat.S_IWRITE | stat.S_IWGRP | stat.S_IWOTH)
+            return self.make_node(mode=mode)
         # otherwise show it as a directory
         else:
             return self.make_node(mode=stat.S_IFDIR, size=0)
@@ -137,8 +144,12 @@ class TangoFS(LoggingMixIn, Operations):
         # Since slashes are not allowed in file names, we encode
         # them as percent signs (%) to sanitize device names
         nodes = [name.replace("/", "%") for name in target.keys()]
-        if isinstance(target, DeviceDict):
-            nodes.append(".info")
+        # if isinstance(target, DeviceDict):
+        #     nodes.append(".info")
+        if isinstance(target, AttributesDict):
+            for i, node in enumerate(nodes):
+                if target[node].display == PyTango.DispLevel.EXPERT:
+                    nodes[i] = "." + node
         # if isinstance(target, PropertiesDict):
         #     nodes.extend([node + ".history" for node in nodes])
         return [".", ".."] + nodes
@@ -270,7 +281,7 @@ class TangoFS(LoggingMixIn, Operations):
     def flush(self, path, fh):
         print "flush", path
 
-    def fsync(self, path, fdatasync, fh):
+    def sync(self, path, fdatasync, fh):
         print "fsync", path, fdatasync
 
     def release(self, path, flags):

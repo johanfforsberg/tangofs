@@ -440,40 +440,46 @@ class AttributesDict(AbstractTangoDict):
     def __init__(self, db, devicename, **kwargs):
         self.devicename = devicename
         self.name = "attributes"
+        self._infos = None
         AbstractTangoDict.__init__(self, db, **kwargs)
 
     def get_items_from_db(self):
         attrs = self.parent.proxy.get_attribute_list()
+        self._infos = self.parent.proxy.get_attribute_config(attrs)
         return list(attrs)
 
     def make_child(self, attrname):
-        return DeviceAttribute(self.devicename, attrname, self.parent)
+        info = None
+        for info in self._infos:
+            if attrname.lower() == info.name.lower():
+                break
+        return DeviceAttribute(self.devicename, attrname, self.parent,
+                               info=info)
 
 
 class DeviceAttribute(object):
 
-    def __init__(self, devicename, name, parent):
+    def __init__(self, devicename, name, parent, info=None):
         self.devicename = devicename
         self.name = name
         self.parent = parent
         self._proxy = None
-        self._config = None
+        self._info = info
         #self.data = self._attribute.read()
         self._last_read = 0
         self._value = None
 
     @property
-    def config(self):
-        if self._config:
-            print self._config
-            return self._config
-        self._config = self.parent.proxy.get_attribute_config(self.name)
-        return self._config
+    def info(self):
+        if self._info:
+            return self._info
+        self._info = self.parent.proxy.get_attribute_config(self.name)
+        return self._info
 
     def keys(self):
-        keys = ["value"] + [attr for attr in dir(self.config)
+        keys = ["value"] + [attr for attr in dir(self.info)
                             if not attr.startswith("__")]
-        if self.config.writable == PyTango.AttrWriteType.WRITE:
+        if self.info.writable == PyTango.AttrWriteType.WRITE:
             keys += ["w_value"]
         return keys
         # filter out some other stuff too?
@@ -481,9 +487,9 @@ class DeviceAttribute(object):
     # add all config items as attributes
     def __getattr__(self, attr):
         if attr == "data_type":
-            return str(PyTango.ArgType.values[self.config.data_type])
-        if hasattr(self.config, attr):
-            return getattr(self.config, attr)
+            return str(PyTango.ArgType.values[self.info.data_type])
+        if hasattr(self.info, attr):
+            return getattr(self.info, attr)
 
     @property
     def value(self):
