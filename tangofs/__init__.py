@@ -88,20 +88,14 @@ class TangoFS(LoggingMixIn, Operations):
                     # store the value in tmp so we don't have to read
                     # it again in the read method. Also, otherwise the
                     # size might be wrong.
-                    # Handling of various data types/formats needs to
-                    # happen here...
-                    # if (child in ("value", "w_value") and
-                    #     target.data_format in (PyTango.AttrDataFormat.SPECTRUM,
-                    #                            PyTango.AttrDataFormat.IMAGE)):
-                    #     value = "\n".join(str(v) for v in getattr(target, child)) + "\n"
-                    # else:
-                    #     value = str(getattr(target, child)) + "\n"
                     if child in ("value", "w_value"):
                         plugins = get_plugins(target.info)
                         value = plugins[0].convert(getattr(target, child))
+                        # TODO: handle the case when more than one plugin
+                        # matches. I guess each plugin need to give a unique
+                        # file extension or something.
                     else:
                         value = str(getattr(target, child)) + "\n"
-                    print value
                     self.tmp[path] = value
                     size = len(value)
                     mode = stat.S_IFREG
@@ -124,17 +118,19 @@ class TangoFS(LoggingMixIn, Operations):
         # properties correspond to files
         if type(target) == DeviceProperty:
             # use last history date as timestamp
-            value = self.tmp[path] = "\n".join(target.value) + "\n"
+            # Fixme: potential performance issue, commented out for now
             #timestamp = parser.parse(target.history[-1].get_date())
+            value = self.tmp[path] = "\n".join(target.value) + "\n"
             return self.make_node(
                 mode=stat.S_IFREG,  # timestamp=unix_time(timestamp),
                 size=len(value))
+
         # commands are executables
         elif isinstance(target, DeviceCommand):
-            # TODO: use the real size
             exe = self.tmp[path] = EXE.format(device=target.devicename,
                                               command=target.name)
-            return self.make_node(mode=stat.S_IFREG | 755, size=len(exe) + 10)
+            return self.make_node(mode=stat.S_IFREG | 755, size=len(exe))
+
         # If a device is exported, mark the node as executable
         elif isinstance(target, DeviceDict):
             # these timestamp formats are completely made up, but
@@ -145,12 +141,14 @@ class TangoFS(LoggingMixIn, Operations):
                 # If the device is exported, mark the node as executable
                 mode |= (stat.S_IEXEC)
             return self.make_node(mode=mode, timestamp=unix_time(timestamp))
+
         elif isinstance(target, DeviceAttribute):
             # set mode according to whether the attr is read/writable
             mode = stat.S_IFDIR | stat.S_IREAD | stat.S_IRGRP | stat.S_IROTH
             if target.writable != PyTango.AttrWriteType.READ:
                 mode |= (stat.S_IWRITE | stat.S_IWGRP | stat.S_IWOTH)
             return self.make_node(mode=mode)
+
         # otherwise show it as a directory
         else:
             return self.make_node(mode=stat.S_IFDIR, size=0)
@@ -347,5 +345,5 @@ class TangoFS(LoggingMixIn, Operations):
 
 def main(mountpoint):
     logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.DEBUG)  # TODO: figure out how to enable logging
     FUSE(TangoFS(logger), mountpoint, foreground=True, nothreads=False)
