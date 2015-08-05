@@ -54,7 +54,6 @@ TODO/IDEAS
 - Differ between OPERATOR/EXPERT levels, perhaps using .hidden files?
 - The plugin system for data formatting needs love
 - Make attribute configuration writable
-- Allow arguments to commands
 - Aliases (as links?)
 - Classes toplevel to access class config (like Jive)
 - How should errors be handled?
