@@ -2,10 +2,9 @@ import logging
 import os
 import re
 import stat
-from errno import ENOENT
+from errno import ENOENT, EPERM, EINVAL  # lots of meaningful errors here!
 from time import time
 
-from convert import make_tango_type
 from datetime import datetime
 from tangodict import (ClassDict, DeviceAttribute, DeviceCommand,
                        DeviceDict, DeviceProperty, InstanceDict,
@@ -228,14 +227,14 @@ class TangoFS(LoggingMixIn, Operations):
             parent, attr = os.path.split(path)
             target = self._get_path(parent)
             if isinstance(target, DeviceAttribute):
-                dtype = target.config.data_type
+                dtype = target.info.data_type
                 try:
-                    value = make_tango_type(dtype, data)
+                    value = PyTango.utils.seqStr_2_obj(data, dtype)
                     setattr(target, attr, value)
                     return len(data)
                 except (ValueError, PyTango.DevFailed) as e:
                     print e
-                    raise FuseOSError(ENOENT)
+                    raise FuseOSError(EINVAL)
         if isinstance(target, DeviceProperty):
             if offset:
                 olddata = "\n".join(target.value) + "\n"
