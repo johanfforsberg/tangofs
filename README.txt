@@ -2,7 +2,10 @@ TangoFS
 
 This is a simple FUSE based filesystem that can be used to interact with a Tango (http://tango-controls.org) controlsystem.
 
-To use it, you need PyTango and fusepy (https://github.com/terencehonles/fusepy) installed, and a Tango database to talk to.
+To use it, you need python (2.x ATM), PyTango, fusepy (https://github.com/terencehonles/fusepy) and dateutils installed, and a Tango database to talk to.
+
+It should work under Linux (tested) and possibly MacOS (not tested).
+
 
 Examples:
 
@@ -10,10 +13,10 @@ Examples:
   $ TANGO_HOST=your-tango-db:10000 tangofs mountpoint
   
   $ ls mountpoint/servers  # list servers!
-    ...
+  ...
     
   $ cat mountpoint/servers/TangoTest/1/TangoTest/sys%tg_test%1/properties/someProperty   # read properties!
-    ...
+  ...
     
   $ cd mountpoint/servers/OtherServer/17/OtherServer   # walk the tree!
 
@@ -24,14 +27,41 @@ Examples:
     
   $ my%nice%device/commands/Init   # run commands!
 
-  $ grep ham mountpoint/devices/*/A5/*/properties/Breakfast  # wield shell power!
-    ...
+  # wield shell power!               
+  $ grep ham mountpoint/devices/*/A5/*/properties/Breakfast
+  ...
+  $ sed s/ham/spam/g mountpoint/devices/*/A5/*/properties/Breakfast
+  ... 
+  $ head mountpoint/devices/*/A5/*/properties/*
+  ...
 
-You get the idea. Properties and attributes are represented as files, commands as executables and everything else as a directory hierarchy resembling a Jive tree. Properties can be written, but not attributes, yet. Creating servers and devices still needs to be figured out.
+  # interactive attribute plotting!
+  $ gnuplot -p -e 'plot "/tmp/test/devices/sys/tg_test/1/attributes/wave/value"'  
 
-The point is to enable easy direct access to Tango data with standard programs that understand files and directories. Various representations and formats of the data might provided, e.g. image formats.
 
-Beware: this is a very fresh project. There are many corner cases to cover and beaviors to consider. Don't use it for anything remotely important. There are bugs hiding everywhere! Also, any aspect of how it works might change in the future.
+You get the idea. Properties and attributes are represented as files, commands as executables and everything else as a directory hierarchy resembling a Jive tree.
+
+The point is to enable easy direct access to Tango data with standard programs that understand files and directories. Various representations and formats of the data could be provided, e.g. image formats, to make it easy to use your favorite software.
+
+Beware: this is a very fresh project with known bugs and very limited testing. Don't use it anywhere near an important system!
+
+
+TODO/IDEAS
+
+- Creating servers
+- Modes and dates should carry meaning where that makes sense.
+- Represent property history, device info, etc
+- Differ between OPERATOR/EXPERT levels, perhaps using .hidden files?
+- The plugin system for data formatting needs love
+- Make attribute configuration writable
+- Allow arguments to commands
+- Aliases (as links?)
+- Classes toplevel to access class config (like Jive)
+- How should errors be handled?
+- Performance profiling of DB access, caching...
+- Logging
+- Unit testing!
+- Python 3 support
 
 Pull requests are welcome!
 

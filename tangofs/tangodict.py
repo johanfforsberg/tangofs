@@ -175,11 +175,11 @@ class AbstractTangoDict(dict):
 class DomainsDict(AbstractTangoDict):
 
     child_type = "domain"
+    name = "domains"
 
     def get_items_from_db(self):
-        self.name = "devices"
         result = self._db.get_device_domain("*")
-        return result.value_string
+        return [s.upper() for s in result.value_string]
 
     def make_child(self, domain):
         return FamiliesDict(self._db, domain, parent=self)
@@ -196,7 +196,7 @@ class FamiliesDict(AbstractTangoDict):
     def get_items_from_db(self):
         result = self._db.get_device_family(self.name + "/*")
         families = result.value_string
-        return families
+        return [f.upper() for f in families]
 
     def make_child(self, family):
         return MembersDict(self._db, self.name, family, parent=self)
@@ -214,7 +214,7 @@ class MembersDict(AbstractTangoDict):
     def get_items_from_db(self):
         result = self._db.get_device_member(self.domain + "/" + self.name + "/*")
         members = result.value_string
-        return members
+        return [m.upper() for m in members]
 
     def make_child(self, member):
         devname = "{0}/{1}/{2}".format(self.domain, self.name, member)
@@ -358,7 +358,7 @@ class ClassDict(AbstractTangoDict):
     def get_items_from_db(self):
         server_instance = "%s/%s" % (self.servername, self.instancename)
         result = self._db.get_device_name(server_instance, self.name)
-        return result.value_string
+        return [s.upper() for s in result.value_string]
 
     def make_child(self, devicename):
         return DeviceDict(self._db, devicename, ttl=self._ttl, parent=self)
@@ -380,7 +380,7 @@ class ClassDict(AbstractTangoDict):
 class DeviceDict(AbstractTangoDict):
 
     def __init__(self, db, name, **kwargs):
-        self.name = name
+        self.name = name.upper()
         self._info = None
         self._proxy = None
         AbstractTangoDict.__init__(self, db, **kwargs)
@@ -445,6 +445,8 @@ class AttributesDict(AbstractTangoDict):
 
     def get_items_from_db(self):
         attrs = self.parent.proxy.get_attribute_list()
+        # More efficient to read all info in one call than to do it for
+        # each child (assuming that the children will eventually be created)
         self._infos = self.parent.proxy.get_attribute_config(attrs)
         return list(attrs)
 

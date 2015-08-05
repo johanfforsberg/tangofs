@@ -7,13 +7,16 @@ from time import time
 
 from convert import make_tango_type
 from datetime import datetime
-from tangodict import (ClassDict, DeviceAttribute, DeviceCommand, DeviceDict,
-                       DeviceProperty, InstanceDict, PropertiesDict, TangoDict,
-                       ServerDict, AttributesDict)
+from tangodict import (ClassDict, DeviceAttribute, DeviceCommand,
+                       DeviceDict, DeviceProperty, InstanceDict,
+                       PropertiesDict, TangoDict, ServerDict,
+                       AttributesDict)
 
 import PyTango
 from dateutil import parser
 from fuse import FUSE, FuseOSError, LoggingMixIn, Operations
+
+from plugins import get_plugins
 
 
 # load the command script template
@@ -82,10 +85,24 @@ class TangoFS(LoggingMixIn, Operations):
                 parent, child = path.rsplit("/", 1)
                 target = self._get_path(parent)
                 if isinstance(target, DeviceAttribute):
-                    # store the value in tmp so we don't have to read it
-                    # again in the read method. This is all supposed to be
-                    # an atomic operation, right?
-                    value = self.tmp[path] = str(getattr(target, child)) + "\n"
+                    # store the value in tmp so we don't have to read
+                    # it again in the read method. Also, otherwise the
+                    # size might be wrong.
+                    # Handling of various data types/formats needs to
+                    # happen here...
+                    # if (child in ("value", "w_value") and
+                    #     target.data_format in (PyTango.AttrDataFormat.SPECTRUM,
+                    #                            PyTango.AttrDataFormat.IMAGE)):
+                    #     value = "\n".join(str(v) for v in getattr(target, child)) + "\n"
+                    # else:
+                    #     value = str(getattr(target, child)) + "\n"
+                    if child in ("value", "w_value"):
+                        plugins = get_plugins(target.info)
+                        value = plugins[0].convert(getattr(target, child))
+                    else:
+                        value = str(getattr(target, child)) + "\n"
+                    print value
+                    self.tmp[path] = value
                     size = len(value)
                     mode = stat.S_IFREG
                     return self.make_node(mode=mode, size=size)
@@ -112,10 +129,11 @@ class TangoFS(LoggingMixIn, Operations):
             return self.make_node(
                 mode=stat.S_IFREG,  # timestamp=unix_time(timestamp),
                 size=len(value))
+        # commands are executables
         elif isinstance(target, DeviceCommand):
             # TODO: use the real size
             return self.make_node(mode=stat.S_IFREG | 755, size=1000)
-        # If the device is exported, mark the node as executable
+        # If a device is exported, mark the node as executable
         elif isinstance(target, DeviceDict):
             # these timestamp formats are completely made up, but
             # hopefully the dateutils parser will hold together...
@@ -175,6 +193,8 @@ class TangoFS(LoggingMixIn, Operations):
             if isinstance(target, DeviceAttribute):
                 # really we should never get here... the value should
                 # always be in tmp since self.getattr()
+                if target.data_format == PyTango.AttrDataFormat.SPECTRUM:
+                    return "\n".join(getattr(target, child)) + "\n"
                 return str(getattr(target, child)) + "\n"
         if isinstance(target, DeviceCommand):
             return EXE.format(device=target.devicename, command=target.name)
