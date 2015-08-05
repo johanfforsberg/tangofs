@@ -13,7 +13,7 @@ info = proxy.command_query("{command}")
 
 USAGE = str(info)  # TODO: nicer help presentation
 parser = optparse.OptionParser(usage=USAGE)
-parser.add_option("-t", "--timeout", dest="timeout", default=3, type="int",
+parser.add_option("-t", "--timeout", dest="timeout", default=3.0, type="float",
                   help="Adjust the timeout for the command (in seconds)")
 parser.add_option("-f", "--forget", dest="forget", default=False,
                   action="store_true", help="Ignore the result")
@@ -24,12 +24,11 @@ if info.in_type == PyTango.ArgType.DevVoid:
     if not len(args) == 0:
         sys.exit("No arguments allowed!")
     argument = None
-elif PyTango.is_scalar_type(info.in_type):
-    if not len(args) == 1:
+else:
+    if PyTango.is_scalar_type(info.in_type) and not len(args) == 1:
         sys.exit("Exactly one argument must be given!")
     argument = PyTango.utils.seqStr_2_obj(args, info.in_type)
-else:
-    argument = PyTango.utils.seqStr_2_obj(args, info.in_type)
+
 
 # run command
 proxy.set_timeout_millis(int(options.timeout * 1000))
@@ -39,7 +38,7 @@ else:
     result = proxy.command_inout("{command}", argument)
 
 # output
-if not options.forget and result is not None:
+if not options.forget and result:
     if PyTango.is_array_type(info.out_type):
         print "\n".join(result)
     else:
