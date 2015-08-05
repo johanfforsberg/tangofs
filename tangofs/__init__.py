@@ -132,7 +132,9 @@ class TangoFS(LoggingMixIn, Operations):
         # commands are executables
         elif isinstance(target, DeviceCommand):
             # TODO: use the real size
-            return self.make_node(mode=stat.S_IFREG | 755, size=1000)
+            exe = self.tmp[path] = EXE.format(device=target.devicename,
+                                              command=target.name)
+            return self.make_node(mode=stat.S_IFREG | 755, size=len(exe) + 10)
         # If a device is exported, mark the node as executable
         elif isinstance(target, DeviceDict):
             # these timestamp formats are completely made up, but
