@@ -3,7 +3,7 @@
 
 import sys
 sys.path = sys.path[1:]  # this is a HACK to prevent python from looking
-                         # in PWD for modules. Find a better way.
+                         # in the cirectory for modules. Find a better way!
 import optparse
 import PyTango
 
@@ -38,7 +38,7 @@ else:
     result = proxy.command_inout("{command}", argument)
 
 # output
-if not options.forget and result:
+if result is not None and not options.forget:
     if PyTango.is_array_type(info.out_type):
         print "\n".join(result)
     else:
