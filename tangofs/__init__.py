@@ -342,7 +342,12 @@ class TangoFS(LoggingMixIn, Operations):
         print "chmod", args
 
 
-def main(mountpoint):
+def main():
+
+    import optparse
+    parser = optparse.OptionParser()
+    options, arguments = parser.parse_args()
+
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)  # TODO: figure out how to enable logging
-    FUSE(TangoFS(logger), mountpoint, foreground=True, nothreads=False)
+    FUSE(TangoFS(logger), arguments[0], foreground=True, nothreads=False)
