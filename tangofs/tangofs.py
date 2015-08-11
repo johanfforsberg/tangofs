@@ -40,8 +40,8 @@ class TangoFS(LoggingMixIn, Operations):
 
     "A FUSE filsystem representing a Tango control system"
 
-    def __init__(self, logger=None):
-        self.tree = TangoDict(logger=logger)  # Tango interaction layer
+    def __init__(self):
+        self.tree = TangoDict()  # Tango interaction layer
         self.tmp = {}  # for keeping track of temporary stuff "in flight"
 
     def _get_path(self, path):
@@ -75,7 +75,6 @@ class TangoFS(LoggingMixIn, Operations):
 
     def getattr(self, path, fh=None):
         "getattr gets run all the time"
-        print "getattr", path, fh
         # TODO: refactor, this is too messy
         try:
             # Firs check if the path is directly accessible
@@ -155,7 +154,6 @@ class TangoFS(LoggingMixIn, Operations):
             return self.make_node(mode=stat.S_IFDIR, size=0)
 
     def readdir(self, path, fh):
-        print "readdir", path
         try:
             target = self._get_path(path)
         except PyTango.DevFailed:
@@ -174,14 +172,12 @@ class TangoFS(LoggingMixIn, Operations):
         return [".", ".."] + nodes
 
     def mkdir(self, path, mode):
-        print "mkdir", path, mode
         parent, name = path.rsplit("/", 1)
         target = self._get_path(parent)
         if isinstance(target, ClassDict):  # creating a device
             target.add([name.replace("%", "/")])
 
     def read(self, path, size, offset, fh):
-        print "read", path, size, offset
         if path in self.tmp:
             return self.tmp.pop(path)
         try:
@@ -204,7 +200,6 @@ class TangoFS(LoggingMixIn, Operations):
 
     def write(self, path, data, offset, fh):
         "Write data to a file"
-        print "write", path, data, offset, fh
         try:
             target = self._get_path(path)
         except KeyError:
@@ -235,7 +230,6 @@ class TangoFS(LoggingMixIn, Operations):
                     setattr(target, attr, value)
                     return len(data)
                 except (ValueError, PyTango.DevFailed) as e:
-                    print e
                     raise FuseOSError(EINVAL)
 
         if isinstance(target, DeviceProperty):
@@ -250,7 +244,6 @@ class TangoFS(LoggingMixIn, Operations):
         return len(data)  # ?
 
     def create(self, path, mode, fi=None):
-        print "create", path, mode, fi
         # In order to create properties we need to temporarily
         # remember them. Otherwise getattr will fail. We could
         # first create an empty property I guess, but that would
@@ -264,7 +257,6 @@ class TangoFS(LoggingMixIn, Operations):
 
     def unlink(self, path):
         # remove a file
-        print "unlink", path
         self.tmp.pop(path)
         target = self._get_path(path)
         if isinstance(target, DeviceProperty):
@@ -286,23 +278,21 @@ class TangoFS(LoggingMixIn, Operations):
         pass
 
     def open(self, path, flags):
-        print "open", path,
         return flags
 
     def flush(self, path, fh):
-        print "flush", path
+        pass
 
     def sync(self, path, fdatasync, fh):
-        print "fsync", path, fdatasync
+        pass
 
     def release(self, path, flags):
-        print "release", path, flags
+        pass
 
     def mknod(*args):
-        print "mknod", args
+        pass
 
     def rename(self, oldpath, newpath):
-        print "rename", oldpath, newpath
         oldparent, oldchild = os.path.split(oldpath)
         newparent, newchild = os.path.split(newpath)
         if oldpath in self.tmp and SEDTMP.match(oldchild):
@@ -327,8 +317,8 @@ class TangoFS(LoggingMixIn, Operations):
 
     def readlink(self, *args):
         # might be useful for aliases..?
-        print "readlink", args
+        pass
 
     def chmod(self, *args):
         # noop, but needs to exist to prevent errors
-        print "chmod", args
+        pass

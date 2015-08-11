@@ -67,7 +67,6 @@ class AbstractTangoDict(dict):
         self._id = next(idgen)
 
     def refresh(self, recurse=False):
-        print "refresh"
         items = self.get_items_from_db()
         self._cache = self._dict_class(**dict((str(name), None)
                                               for name in items))
@@ -168,8 +167,8 @@ class AbstractTangoDict(dict):
                     result[key] = child
         return result
 
-    def __del__(self):
-        print "GC", self.name, self.parent._cache.get(self.name)
+    # def __del__(self):
+    #     print "GC", self.name, self.parent._cache.get(self.name)
 
 
 class DomainsDict(AbstractTangoDict):
@@ -666,22 +665,22 @@ class ObjectWrapper(object):
     def __init__(self, target=None, logger=False):
         self.target = target
         self.calls = []
-        self.logger = logger
-        print self.logger
+        self._logger = logger
 
     def __getattr__(self, attr):
 
+        if attr.startswith("_"):
+            return getattr(self, attr)
+
         def method(attr, *args, **kwargs):
             call = (attr, args, kwargs)
-            print call
             self.calls.append(call)
             if self.logger:
                 fmt = "%s(%s)" % (attr,
                                   ", ".join(chain(("%r" % a for a in args),
                                                   ("%s=%r" % i
                                                    for i in kwargs.items()))))
-                #self.logger.info(fmt)
-                print "*", fmt
+                self._logger.debug(fmt)
             if self.target:
                 return getattr(self.target, attr)(*args, **kwargs)
 
@@ -690,7 +689,9 @@ class ObjectWrapper(object):
 
 class TangoDict(dict):
 
-    def __init__(self, ttl=None, db=None, logger=None, *args, **kwargs):
+    def __init__(self, ttl=None, db=None, *args, **kwargs):
+        import logging
+        logger = logging.getLogger(self.__class__.__name__)
         self._db = db or ObjectWrapper(PyTango.Database(), logger=logger)
         self.logger = logger
         self["servers"] = ServersDict(self._db, ttl=ttl)
