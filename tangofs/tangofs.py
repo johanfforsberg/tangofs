@@ -89,8 +89,9 @@ class TangoFS(LoggingMixIn, Operations):
                     # it again in the read method. Also, otherwise the
                     # size might be wrong.
                     if child in ("value", "w_value"):
-                        plugins = get_plugins(target.info)
-                        value = plugins[0].convert(getattr(target, child))
+                        data = getattr(target, child)
+                        plugins = get_plugins(target.info, data)
+                        value = plugins[0].convert(data)
                         # TODO: handle the case when more than one plugin
                         # matches. I guess each plugin need to give a unique
                         # file extension or something.

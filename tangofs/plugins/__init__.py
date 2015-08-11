@@ -2,7 +2,11 @@
 A hacky plugin system for file formatters
 """
 
+# TODO: figure out a way to allow more than one plugin to work
+# on an attribute, e.g. by using different file extensions?
+
 import imp
+import logging
 import os
 import glob
 
@@ -17,17 +21,14 @@ for f in glob.glob(os.path.dirname(__file__)+"/*.py"):
         plugins.append(plugin)
 
 
-def get_plugins(info):
+def get_plugins(info, data):
     "Find any suitable plugins given an attribute info object"
     matches = []
     for plugin in plugins:
-        print "Testing", plugin.spec["name"],
-        data_type = plugin.spec.get("data_type")
-        data_format = plugin.spec.get("data_format")
-        if all((data_type is None or data_type == info.data_type,
-                data_format is None or data_format == info.data_format)):
-            print "...matches!"
+        logging.debug("Testing plugin '%s' on '%s", plugin.__name__, info.name)
+        if plugin.check(info, data):
+            logging.debug("Plugin '%s' matches '%s'!", plugin.__name__, info.name)
             matches.append(plugin)
         else:
-            print "...does not match"
+            logging.debug("Plugin '%s' does not match '%s'.", plugin.__name__, info.name)
     return matches

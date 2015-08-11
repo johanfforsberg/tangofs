@@ -1,13 +1,13 @@
+"A 'plugin' that handles spectrum attributes by converting them to a string"
+
+
 import PyTango
 
-# The spec should constrain what attributes the plugin can handle.
-# Only included fields are tested, absent fields are treated as automatic
-# matches.
-# Currently only the "data_format" and "data_type" fields are checked.
-spec = {
-    "name": "spectrum",
-    "data_format": PyTango.AttrDataFormat.SPECTRUM,
-}
+
+def check(info, data):
+    """Gets an AttributeInfo object and data, and should return True if
+    the plugin thinks it is able to handle the attribute data."""
+    return info.data_format == PyTango.AttrDataFormat.SPECTRUM
 
 
 def convert(value):
