@@ -5,12 +5,12 @@ as a nested Python dict which is lazily loaded from the db as
 it is accessed.
 """
 
-import re
 from abc import ABCMeta, abstractmethod
 from functools import partial
 from itertools import chain
-from time import time
-#from weakref import ref, ReferenceError
+import logging
+import re
+
 
 import PyTango
 
@@ -25,15 +25,6 @@ DEVICE_REGEX = "^([_-\w]+)/([_-\w]+)/([_-\w]+)$"
 server_validator = lambda name, _: re.match(SERVER_REGEX, name)
 class_validator = lambda name, _: re.match(CLASS_REGEX, name)
 device_validator = lambda name, _: re.match(DEVICE_REGEX, name)
-
-
-def create_ids():
-    i = 0
-    while True:
-        yield i
-        i += 1
-
-idgen = create_ids()
 
 
 class AbstractTangoDict(dict):
@@ -64,7 +55,6 @@ class AbstractTangoDict(dict):
         else:
             self._dict_class = CaselessDictionary
         self._cache = self._dict_class()
-        self._id = next(idgen)
 
     def refresh(self, recurse=False):
         items = self.get_items_from_db()
@@ -408,7 +398,9 @@ class DeviceDict(AbstractTangoDict):
     def proxy(self):
         if self._proxy:
             return self._proxy
-        self._proxy = PyTango.DeviceProxy(self.name)
+        self._proxy = ObjectWrapper(
+            PyTango.DeviceProxy(self.name),
+            logger=logging.getLogger("DeviceProxy(%s)" % self.name))
         return self._proxy
 
     @property
@@ -526,7 +518,9 @@ class CommandsDict(AbstractTangoDict):
     def proxy(self):
         if self._proxy:
             return self._proxy
-        self._proxy = PyTango.DeviceProxy(self.devicename)
+        self._proxy = ObjectWrapper(
+            PyTango.DeviceProxy(self.devicename),
+            logger=logging.getLogger("DeviceProxy(%s)" % self.name))
         return self._proxy
 
     def get_items_from_db(self):
@@ -662,8 +656,9 @@ class ObjectWrapper(object):
     """An object that allows all method calls and records them,
     then passes them on to a target object (if any)."""
 
-    def __init__(self, target=None, logger=False):
+    def __init__(self, target=None, keep=False, logger=False):
         self.target = target
+        self.keep = keep
         self.calls = []
         self._logger = logger
 
@@ -674,7 +669,8 @@ class ObjectWrapper(object):
 
         def method(attr, *args, **kwargs):
             call = (attr, args, kwargs)
-            self.calls.append(call)
+            if self.keep:
+                self.calls.append(call)
             if self.logger:
                 fmt = "%s(%s)" % (attr,
                                   ", ".join(chain(("%r" % a for a in args),
@@ -690,8 +686,7 @@ class ObjectWrapper(object):
 class TangoDict(dict):
 
     def __init__(self, ttl=None, db=None, *args, **kwargs):
-        import logging
-        logger = logging.getLogger(self.__class__.__name__)
+        logger = logging.getLogger("tangodb")
         self._db = db or ObjectWrapper(PyTango.Database(), logger=logger)
         self.logger = logger
         self["servers"] = ServersDict(self._db, ttl=ttl)
