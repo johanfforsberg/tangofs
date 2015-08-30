@@ -497,12 +497,14 @@ class DeviceAttribute(object):
         self.parent.proxy.set_attribute_config(self.info)
 
     def keys(self):
-        keys = ["value"] + [attr for attr in dir(self.info)
-                            if not attr.startswith("__")]
+        keys = (["value"] +
+                [attr for attr in dir(self.info)
+                 if not attr.startswith("__") and
+                 # don't know what these are for...
+                 attr not in ["extensions", "writable_attr_name"]])
         if self.info.writable == PyTango.AttrWriteType.WRITE:
             keys += ["w_value"]
         return keys
-        # filter out some other stuff too?
 
     @property
     def writable(self):
@@ -516,6 +518,18 @@ class DeviceAttribute(object):
     @property
     def disp_level(self):
         return self.info.disp_level
+
+    @property
+    def data_format(self):
+        return self.info.data_format
+
+    @property
+    def max_dim_x(self):
+        return self.info.max_dim_x
+
+    @property
+    def max_dim_y(self):
+        return self.info.max_dim_y
 
     @property
     def value(self):
@@ -553,6 +567,22 @@ class DeviceAttribute(object):
     @max_value.setter
     def max_value(self, value):
         self.set_config("max_value", value)
+
+    @property
+    def min_alarm(self):
+        return self.info.min_alarm
+
+    @min_alarm.setter
+    def min_alarm(self, value):
+        self.set_config("min_alarm", value)
+
+    @property
+    def max_alarm(self):
+        return self.info.max_alarm
+
+    @max_alarm.setter
+    def max_alarm(self, value):
+        self.set_config("max_alarm", value)
 
     @property
     def description(self):
