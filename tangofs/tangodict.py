@@ -497,7 +497,7 @@ class DeviceAttribute(object):
         self.parent.proxy.set_attribute_config(self.info)
 
     def keys(self):
-        keys = (["value"] +
+        keys = (["value", "polling_period", "polling_status"] +
                 [attr for attr in dir(self.info)
                  if not attr.startswith("__") and
                  # don't know what these are for...
@@ -532,6 +532,14 @@ class DeviceAttribute(object):
         return self.info.max_dim_y
 
     @property
+    def polling_status(self):
+        # Maybe this should be reformatted better?
+        status = [s for s in self.parent.proxy.polling_status()
+                  if self.name in s.splitlines()[0]]  # TODO: make this safer
+        if status:
+            return status[0]
+
+    @property
     def value(self):
         self._value = self.parent.proxy.read_attribute(self.name).value
         return self._value
@@ -548,6 +556,19 @@ class DeviceAttribute(object):
     @w_value.setter
     def w_value(self, value):
         self.parent.proxy.write_attribute(self.name, value)
+
+    # Polling
+
+    @property
+    def polling_period(self):
+        return self.parent.proxy.get_attribute_poll_period(self.name)
+
+    @polling_period.setter
+    def polling_period(self, value):
+        print
+        print "********", value
+        print
+        self.parent.proxy.poll_attribute(self.name, int(value))
 
     # Configuration #
     # TODO: I'm sure be more neatly done with __set/getattr__ magic...

@@ -258,7 +258,8 @@ class TangoFS(LoggingMixIn, Operations):
                         raise FuseOSError(EINVAL)
                 elif attr in ("label", "unit", "display_unit", "standard_unit",
                               "description", "format",
-                              "min_value", "max_value", "min_alarm", "max_alarm"):
+                              "min_value", "max_value", "min_alarm", "max_alarm",
+                              "polling_period"):
                     setattr(target, attr, data.strip())
 
         if isinstance(target, DeviceProperty):
