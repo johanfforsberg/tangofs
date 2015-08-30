@@ -168,7 +168,7 @@ class DomainsDict(AbstractTangoDict):
 
     def get_items_from_db(self):
         result = self._db.get_device_domain("*")
-        return [s.upper() for s in result.value_string]
+        return [s.lower() for s in result.value_string]
 
     def make_child(self, domain):
         return FamiliesDict(self._db, domain, parent=self)
@@ -185,7 +185,7 @@ class FamiliesDict(AbstractTangoDict):
     def get_items_from_db(self):
         result = self._db.get_device_family(self.name + "/*")
         families = result.value_string
-        return [f.upper() for f in families]
+        return [f.lower() for f in families]
 
     def make_child(self, family):
         return MembersDict(self._db, self.name, family, parent=self)
@@ -203,7 +203,7 @@ class MembersDict(AbstractTangoDict):
     def get_items_from_db(self):
         result = self._db.get_device_member(self.domain + "/" + self.name + "/*")
         members = result.value_string
-        return [m.upper() for m in members]
+        return [m.lower() for m in members]
 
     def make_child(self, member):
         devname = "{0}/{1}/{2}".format(self.domain, self.name, member)
@@ -229,16 +229,17 @@ class ServersDict(AbstractTangoDict):
     def path(self):
         return ("servers",)
 
-    def add(self, srvname, instname, classname, devices):
+    def add(self, srvname, instname, classname=None, devices=None):
         "add servers, instances and/or devices"
         servername = "%s/%s" % (srvname, instname)
         devinfos = []
-        for dev in devices:
-            devinfo = PyTango.DbDevInfo()
-            devinfo.name = dev
-            devinfo._class = classname
-            devinfo.server = servername
-            devinfos.append(devinfo)
+        if classname and devices:
+            for dev in devices:
+                devinfo = PyTango.DbDevInfo()
+                devinfo.name = dev
+                devinfo._class = classname
+                devinfo.server = servername
+                devinfos.append(devinfo)
         # if the server/instance doesn't exist, create it...
         if (srvname not in self
                 or instname not in self.get(srvname, {})):
@@ -287,7 +288,7 @@ class ServerDict(AbstractTangoDict):
         self.delete(instancename)
 
     def delete(self, instancename):
-        self._db.delete_server("%s/%s" % (self.servername, self.name))
+        self._db.delete_server("%s/%s" % (self.name, instancename))
         self._cache.clear()
 
 
@@ -347,7 +348,7 @@ class ClassDict(AbstractTangoDict):
     def get_items_from_db(self):
         server_instance = "%s/%s" % (self.servername, self.instancename)
         result = self._db.get_device_name(server_instance, self.name)
-        return [s.upper() for s in result.value_string]
+        return [s.lower() for s in result.value_string]
 
     def make_child(self, devicename):
         return DeviceDict(self._db, devicename, ttl=self._ttl, parent=self)
@@ -369,7 +370,7 @@ class ClassDict(AbstractTangoDict):
 class DeviceDict(AbstractTangoDict):
 
     def __init__(self, db, name, **kwargs):
-        self.name = name.upper()
+        self.name = name.lower()
         self._info = None
         self._proxy = None
         AbstractTangoDict.__init__(self, db, **kwargs)
@@ -377,13 +378,31 @@ class DeviceDict(AbstractTangoDict):
     def make_child(self, name):
         if name == "properties":
             return PropertiesDict(self._db, self.name, parent=self, ttl=self._ttl)
-        if name == "attributes":
-            return AttributesDict(self._db, self.name, parent=self, ttl=self._ttl)
-        if name == "commands":
-            return CommandsDict(self._db, self.name, parent=self, ttl=self._ttl)
+
+        # TODO: this is awkward
+        elif name == "attributes" and self.proxy:
+            try:
+                self.proxy.ping()
+                return AttributesDict(self._db, self.name, parent=self, ttl=self._ttl)
+            except PyTango.DevFailed:
+                logging.debug("cannot communicate with device %s", self.name)
+                return
+        elif name == "commands" and self.proxy:
+            try:
+                self.proxy.ping()
+                return CommandsDict(self._db, self.name, parent=self, ttl=self._ttl)
+            except PyTango.DevFailed:
+                logging.debug("cannot communicate with device %s", self.name)
+                return
 
     def get_items_from_db(self):
-        return ["properties", "attributes", "commands"]
+        if self.proxy:
+            try:
+                self.proxy.ping()
+                return ["properties", "attributes", "commands"]
+            except PyTango.DevFailed:
+                pass
+        return ["properties"]
 
     def make_parent(self):
         cls = self.info.class_name
@@ -398,10 +417,14 @@ class DeviceDict(AbstractTangoDict):
     def proxy(self):
         if self._proxy:
             return self._proxy
-        self._proxy = ObjectWrapper(
-            PyTango.DeviceProxy(self.name),
-            logger=logging.getLogger("DeviceProxy(%s)" % self.name))
-        return self._proxy
+        try:
+            self._proxy = ObjectWrapper(
+                PyTango.DeviceProxy(self.name),
+                logger=logging.getLogger("DeviceProxy(%s)" % self.name))
+            return self._proxy
+        except PyTango.DevFailed:
+            logging.debug("cannot create proxy to device %s", self.name)
+            pass
 
     @property
     def info(self):

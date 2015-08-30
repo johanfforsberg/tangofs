@@ -9,7 +9,7 @@ from dateutil import parser
 from fuse import FuseOSError, LoggingMixIn, Operations
 import PyTango
 
-from tangodict import (ClassDict, DeviceAttribute, DeviceCommand,
+from tangodict import (ServersDict, ClassDict, DeviceAttribute, DeviceCommand,
                        DeviceDict, DeviceProperty, InstanceDict,
                        PropertiesDict, TangoDict, ServerDict,
                        AttributesDict)
@@ -27,7 +27,9 @@ with open("/".join(__path__) + "/command.py") as f:
 SEDTMP = re.compile("sed\w{6}")
 
 # constants
-PROPERTY = 0
+SERVER = 0
+CLASS = 1
+PROPERTY = 2
 
 
 def unix_time(dt):
@@ -108,6 +110,9 @@ class TangoFS(LoggingMixIn, Operations):
                     if self.tmp[path] == PROPERTY:
                         # This means the user is creating a property
                         del self.tmp[path]
+                    elif self.tmp[path] == SERVER:
+                        self.log.debug("wheee")
+                        return self.make_node(mode=stat.S_IFDIR, size=0)
                     # ... insert other types of pending operations ...
                     return self.make_node(mode=stat.S_IFREG)
                 else:
@@ -155,6 +160,8 @@ class TangoFS(LoggingMixIn, Operations):
             return self.make_node(mode=stat.S_IFDIR, size=0)
 
     def readdir(self, path, fh):
+        if path in self.tmp:
+            return [".", "."]
         try:
             target = self._get_path(path)
         except PyTango.DevFailed:
@@ -173,10 +180,25 @@ class TangoFS(LoggingMixIn, Operations):
         return [".", ".."] + nodes
 
     def mkdir(self, path, mode):
-        parent, name = path.rsplit("/", 1)
-        target = self._get_path(parent)
-        if isinstance(target, ClassDict):  # creating a device
-            target.add([name.replace("%", "/")])
+        parent, child = path.rsplit("/", 1)
+
+        if parent in self.tmp:
+            # we are creating something
+            thing = self.tmp[parent]
+            if thing == SERVER:
+                server = parent.rsplit("/", 1)[-1]
+                self.tree["servers"].add(server, child)
+            elif thing == CLASS:
+                _, server, inst, clss = parent.split("/")
+                self.tree["servers"].add(server, inst, clss, child)
+        else:
+            target = self._get_path(parent)
+            if isinstance(target, ServersDict):
+                self.tmp[path] = SERVER
+            elif isinstance(target, InstanceDict):
+                self.tmp[path] = CLASS
+            elif isinstance(target, ClassDict):  # creating a device
+                target.add([child.replace("%", "/")])
 
     def read(self, path, size, offset, fh):
         if path in self.tmp:
@@ -294,6 +316,9 @@ class TangoFS(LoggingMixIn, Operations):
         pass
 
     def rename(self, oldpath, newpath):
+
+        # renaming currently only works for properties
+
         oldparent, oldchild = os.path.split(oldpath)
         newparent, newchild = os.path.split(newpath)
         if oldpath in self.tmp and SEDTMP.match(oldchild):
@@ -301,6 +326,7 @@ class TangoFS(LoggingMixIn, Operations):
             # presumably it's created by sed
             value = self.tmp.pop(oldpath)
             if SEDTMP.match(newchild):
+                # not sure if this ever happens
                 self.tmp[newpath] = value
                 return 0
             else:
