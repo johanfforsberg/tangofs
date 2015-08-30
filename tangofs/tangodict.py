@@ -492,6 +492,10 @@ class DeviceAttribute(object):
         self._info = self.parent.proxy.get_attribute_config(self.name)
         return self._info
 
+    def set_config(self, attr, value):
+        setattr(self.info, attr, value)
+        self.parent.proxy.set_attribute_config(self.info)
+
     def keys(self):
         keys = ["value"] + [attr for attr in dir(self.info)
                             if not attr.startswith("__")]
@@ -500,12 +504,18 @@ class DeviceAttribute(object):
         return keys
         # filter out some other stuff too?
 
+    @property
+    def writable(self):
+        return str(self.info.writable)
+
     # add all config items as attributes
-    def __getattr__(self, attr):
-        if attr == "data_type":
-            return str(PyTango.ArgType.values[self.info.data_type])
-        if hasattr(self.info, attr):
-            return getattr(self.info, attr)
+    @property
+    def data_type(self):
+        return str(PyTango.ArgType.values[self.info.data_type])
+
+    @property
+    def disp_level(self):
+        return self.info.disp_level
 
     @property
     def value(self):
@@ -524,6 +534,73 @@ class DeviceAttribute(object):
     @w_value.setter
     def w_value(self, value):
         self.parent.proxy.write_attribute(self.name, value)
+
+    # Configuration #
+    # TODO: I'm sure be more neatly done with __set/getattr__ magic...
+
+    @property
+    def min_value(self):
+        return self.info.min_value
+
+    @min_value.setter
+    def min_value(self, value):
+        self.set_config("min_value", value)
+
+    @property
+    def max_value(self):
+        return self.info.max_value
+
+    @max_value.setter
+    def max_value(self, value):
+        self.set_config("max_value", value)
+
+    @property
+    def description(self):
+        return self.info.description
+
+    @description.setter
+    def description(self, desc):
+        self.set_config("description", desc)
+
+    @property
+    def label(self):
+        return self.info.label
+
+    @label.setter
+    def label(self, value):
+        self.set_config("label", value)
+
+    @property
+    def unit(self):
+        return self.info.unit
+
+    @unit.setter
+    def unit(self, value):
+        self.set_config("unit", value)
+
+    @property
+    def standard_unit(self):
+        return self.info.standard_unit
+
+    @standard_unit.setter
+    def standard_unit(self, value):
+        self.set_config("standard_unit", value)
+
+    @property
+    def display_unit(self):
+        return self.info.display_unit
+
+    @display_unit.setter
+    def display_unit(self, value):
+        self.set_config("display_unit", value)
+
+    @property
+    def format(self):
+        return self.info.format
+
+    @format.setter
+    def format(self, value):
+        self.set_config("format", value)
 
 
 class CommandsDict(AbstractTangoDict):

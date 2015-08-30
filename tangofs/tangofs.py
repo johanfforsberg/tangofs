@@ -173,7 +173,7 @@ class TangoFS(LoggingMixIn, Operations):
         #     nodes.append(".info")
         if isinstance(target, AttributesDict):
             for i, node in enumerate(nodes):
-                if target[node].display == PyTango.DispLevel.EXPERT:
+                if target[node].disp_level == PyTango.DispLevel.EXPERT:
                     nodes[i] = "." + node
         # if isinstance(target, PropertiesDict):
         #     nodes.extend([node + ".history" for node in nodes])
@@ -247,13 +247,19 @@ class TangoFS(LoggingMixIn, Operations):
             parent, attr = os.path.split(path)
             target = self._get_path(parent)
             if isinstance(target, DeviceAttribute):
-                dtype = target.info.data_type
-                try:
-                    value = PyTango.utils.seqStr_2_obj(data, dtype)
-                    setattr(target, attr, value)
-                    return len(data)
-                except (ValueError, PyTango.DevFailed) as e:
-                    raise FuseOSError(EINVAL)
+                if attr in ("write", "w_value"):
+                    dtype = target.info.data_type
+                    try:
+                        value = PyTango.utils.seqStr_2_obj(data, dtype)
+                        setattr(target, attr, value)
+                        return len(data)
+                    except (ValueError, PyTango.DevFailed) as e:
+                        self.log.debug(e)
+                        raise FuseOSError(EINVAL)
+                elif attr in ("label", "unit", "display_unit", "standard_unit",
+                              "description", "format",
+                              "min_value", "max_value", "min_alarm", "max_alarm"):
+                    setattr(target, attr, data.strip())
 
         if isinstance(target, DeviceProperty):
             if offset:
