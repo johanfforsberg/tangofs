@@ -44,7 +44,8 @@ class TangoFS(LoggingMixIn, Operations):
 
     def __init__(self):
         self.tree = TangoDict()  # Tango interaction layer
-        self.tmp = {}  # for keeping track of temporary stuff "in flight"
+        self.tmp = {}
+        # tmp is for keeping track of temporary stuff "in flight"
 
     def _get_path(self, path):
         # decode device slashes
@@ -87,18 +88,24 @@ class TangoFS(LoggingMixIn, Operations):
                 parent, child = path.rsplit("/", 1)
                 target = self._get_path(parent)
                 if isinstance(target, DeviceAttribute):
-                    # store the value in tmp so we don't have to read
-                    # it again in the read method. Also, otherwise the
-                    # size might be wrong.
-                    if child in ("value", "w_value"):
-                        data = getattr(target, child)
-                        plugins = get_plugins(target.info, data)
-                        value = plugins[0].convert(data)
-                        # TODO: handle the case when more than one plugin
-                        # matches. I guess each plugin need to give a unique
-                        # file extension or something.
+                    if path in self.tmp:
+                        value = self.tmp[path]
                     else:
-                        value = str(getattr(target, child)) + "\n"
+                        # store the value in tmp so we don't have to read
+                        # it again in the read method. Also, otherwise the
+                        # size might be wrong.
+                        if child in ("value", "w_value"):
+                            data = getattr(target, child)
+                            plugins = get_plugins(target.info, data)
+                            try:
+                                value = plugins[0].convert(data)
+                            except Exception as e:
+                                self.log.error("Decoding failed: %s", e)
+                            # TODO: handle the case when more than one plugin
+                            # matches. I guess each plugin need to give a unique
+                            # file extension or something.
+                        else:
+                            value = str(getattr(target, child))
                     self.tmp[path] = value
                     size = len(value)
                     mode = stat.S_IFREG
@@ -202,24 +209,12 @@ class TangoFS(LoggingMixIn, Operations):
 
     def read(self, path, size, offset, fh):
         if path in self.tmp:
-            return self.tmp.pop(path)
-        try:
-            target = self._get_path(path)
-        except KeyError:
-            raise FuseOSError(ENOENT)
-        except TypeError:  # ugh
-            parent, child = path.rsplit("/", 1)
-            target = self._get_path(parent)
-            if isinstance(target, DeviceAttribute):
-                # really we should never get here... the value should
-                # always be in tmp since self.getattr()
-                if target.data_format == PyTango.AttrDataFormat.SPECTRUM:
-                    return "\n".join(getattr(target, child)) + "\n"
-                return str(getattr(target, child)) + "\n"
-        if isinstance(target, DeviceCommand):
-            return EXE.format(device=target.devicename, command=target.name)
-        if isinstance(target, DeviceProperty):
-            return "\n".join(target.value) + "\n"
+            return self.tmp[path][offset:offset+size]
+        # As it works right now, we prepare the value in getattr
+        # so it should always be available at this point.
+        # This is probably not the best way, since it means we're
+        # reading things even if the user is just writing.
+        raise FuseOSError(ENOENT)
 
     def write(self, path, data, offset, fh):
         "Write data to a file"
@@ -310,6 +305,7 @@ class TangoFS(LoggingMixIn, Operations):
     def open(self, path, flags):
         return flags
 
+
     def flush(self, path, fh):
         pass
 
@@ -317,6 +313,8 @@ class TangoFS(LoggingMixIn, Operations):
         pass
 
     def release(self, path, flags):
+        if path in self.tmp:
+            del self.tmp[path]
         pass
 
     def mknod(*args):

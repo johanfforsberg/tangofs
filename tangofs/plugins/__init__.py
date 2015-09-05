@@ -17,7 +17,10 @@ plugins = []
 for f in glob.glob(os.path.dirname(__file__)+"/*.py"):
     name = os.path.splitext(os.path.basename(f))[0]
     if name != "__init__":
-        plugin = imp.load_source(name, f)
+        try:
+            plugin = imp.load_source(name, f)
+        except Exception as e:
+            pass  # TODO: handle broken plugins better
         plugins.append(plugin)
 
 
