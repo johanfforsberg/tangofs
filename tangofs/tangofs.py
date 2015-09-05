@@ -125,10 +125,10 @@ class TangoFS(LoggingMixIn, Operations):
         if type(target) == DeviceProperty:
             # use last history date as timestamp
             # Fixme: potential performance issue, commented out for now
-            #timestamp = parser.parse(target.history[-1].get_date())
+            timestamp = parser.parse(target.history[-1].get_date())
             value = self.tmp[path] = "\n".join(target.value) + "\n"
             return self.make_node(
-                mode=stat.S_IFREG,  # timestamp=unix_time(timestamp),
+                mode=stat.S_IFREG, timestamp=unix_time(timestamp),
                 size=len(value))
 
         # commands are executables
@@ -247,7 +247,7 @@ class TangoFS(LoggingMixIn, Operations):
             parent, attr = os.path.split(path)
             target = self._get_path(parent)
             if isinstance(target, DeviceAttribute):
-                if attr in ("write", "w_value"):
+                if attr in ("value", "w_value"):
                     dtype = target.info.data_type
                     try:
                         value = PyTango.utils.seqStr_2_obj(data, dtype)
