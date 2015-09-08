@@ -79,6 +79,9 @@ class TangoFS(LoggingMixIn, Operations):
     def getattr(self, path, fh=None):
         "getattr gets run all the time"
         # TODO: refactor, this is too messy
+        # Maybe some of this stuff can be moved into open?
+        # Apparently, if something is read several times quickly,
+        # getattr may not be called in subsequent calls. Caching?
         try:
             # Firs check if the path is directly accessible
             target = self._get_path(path)
@@ -106,6 +109,7 @@ class TangoFS(LoggingMixIn, Operations):
                             # file extension or something.
                         else:
                             value = str(getattr(target, child))
+                        # TODO: How about quality?
                     self.tmp[path] = value
                     size = len(value)
                     mode = stat.S_IFREG
@@ -156,7 +160,7 @@ class TangoFS(LoggingMixIn, Operations):
             return self.make_node(mode=mode, timestamp=unix_time(timestamp))
 
         elif isinstance(target, DeviceAttribute):
-            # set mode according to whether the attr is read/writable
+            # set mode accordingbi to whether the attr is read/writable
             mode = stat.S_IFDIR | stat.S_IREAD | stat.S_IRGRP | stat.S_IROTH
             if target.writable != PyTango.AttrWriteType.READ:
                 mode |= (stat.S_IWRITE | stat.S_IWGRP | stat.S_IWOTH)
