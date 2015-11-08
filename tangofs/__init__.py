@@ -20,4 +20,4 @@ def main():
         logging.basicConfig()
 
     FUSE(TangoFS(), arguments[0], foreground=options.foreground,
-         nothreads=False)
+         nothreads=False, direct_io=True)
